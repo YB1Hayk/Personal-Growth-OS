@@ -1,0 +1,30 @@
+# Dependencies
+node_modules/
+
+# Env files (secrets)
+.env
+.env.local
+.env.*.local
+
+# Build output
+dist/
+dist-ssr/
+build/
+
+# SQLite dev database
+apps/api/prisma/dev.db
+apps/api/prisma/dev.db-journal
+
+# Logs
+*.log
+npm-debug.log*
+
+# Editor
+.vscode/*
+!.vscode/extensions.json
+.idea
+.DS_Store
+
+# Vite cache
+.vite/
+.vite-temp/

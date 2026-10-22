@@ -1,0 +1,2282 @@
+--- a/CLAUDE_1.md
++++ b/CLAUDE_1.md
+@@ -1,4 +1,7 @@
+ # CLAUDE.md — Personal Growth OS
++
++> Корректировки 13.10.2026: безопасный локальный режим, атомарная публикация, авторизация/идемпотентность постбеков, защита загрузки сайтов и восстановленные миграции. Новая установка и обновление старой БД описаны в `README_REVIEW.md`. Автогенерация недельного плана по дню пока отключена; UI не является серверным планировщиком. Трафик реализован как локальный модуль, публичный приём постбеков требует отдельного защищённого развёртывания.
++
+ 
+ ## Проект
+ 
+--- a/apps/api/.env.example
++++ b/apps/api/.env.example
+@@ -5,8 +5,8 @@
+ PORT=3001
+ 
+ # Prisma datasource. SQLite for local/single-user use, e.g.:
+-# DATABASE_URL="file:./prisma/dev.db"
+-DATABASE_URL=
++# DATABASE_URL="file:./dev.db""file:./prisma/dev.db"
++DATABASE_URL="file:./dev.db"
+ 
+ # OpenAI API key, used only if AI_PROVIDER=openai (legacy direct OpenAI provider)
+ OPENAI_API_KEY=
+@@ -26,3 +26,7 @@
+ # Model string as listed on https://openrouter.ai/models, e.g.
+ # "deepseek/deepseek-chat" (cheap default) or "anthropic/claude-sonnet-4.5"
+ OPENROUTER_MODEL=deepseek/deepseek-chat
++
++# S2S postback authentication. Generate: node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"
++# Partner must send x-postback-token header and unique eventid query parameter.
++POSTBACK_TOKEN=
+--- a/apps/api/package.json
++++ b/apps/api/package.json
+@@ -4,7 +4,14 @@
+   "description": "API API",
+   "main": "src/index.ts",
+   "scripts": {
+-    "dev": "ts-node-dev --respawn --transpile-only src/index.ts"
++    "dev": "ts-node-dev --respawn --transpile-only src/index.ts",
++    "build": "tsc",
++    "typecheck": "tsc --noEmit",
++    "start": "node dist/index.js",
++    "test": "npm run build && node --test tests/*.test.cjs",
++    "db:generate": "prisma generate",
++    "db:migrate": "prisma migrate deploy",
++    "db:upgrade": "node scripts/upgrade-db.cjs"
+   },
+   "dependencies": {
+     "@prisma/client": "^5.12.1",
+--- /dev/null
++++ b/apps/api/prisma/legacy-schema-check.prisma
+@@ -0,0 +1,196 @@
++generator client {
++  provider = "prisma-client-js"
++}
++
++datasource db {
++  provider = "sqlite"
++  url      = env("DATABASE_URL")
++}
++
++model Project {
++  id              String        @id @default(uuid())
++  name            String
++  niche           String
++  description     String?
++  dna             String?
++  targetAudience  String?
++  brandVoice      String?
++  sourceUrl       String?
++  tgBotToken      String?
++  tgChatId        String?
++  planGenerationDay Int?          // 0-6 (Sunday-Saturday) для авто-генерации плана
++  createdAt       DateTime      @default(now())
++  updatedAt       DateTime      @updatedAt
++  posts           ContentPost[]
++  leads           Lead[]
++  integrations    Integration[]
++  outreachTemplates OutreachTemplate[]
++  insights          MarketInsight[]
++  learningInsights  LearningInsight[]
++  trackingLinks     TrackingLink[]
++}
++
++model MarketInsight {
++  id        String   @id @default(uuid())
++  projectId String
++  content   String   // Текст инсайта
++  category  String   // боль / запрос / тренд
++  source    String?  // Опциональная ссылка
++  createdAt DateTime @default(now())
++  project   Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
++}
++
++model Integration {
++  id        String   @id @default(uuid())
++  projectId String
++  platform  String   // Сюда будем писать "TELEGRAM"
++  config    String   // JSON-строка с токеном и chat_id
++  project   Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
++  createdAt DateTime @default(now())
++  updatedAt DateTime @updatedAt
++}
++
++model Account {
++  id        String   @id @default(uuid())
++  platform  String
++  login     String
++  status    String   @default("active")
++  createdAt DateTime @default(now())
++  updatedAt DateTime @updatedAt
++}
++
++model Lead {
++  id          String   @id @default(uuid())
++  name        String
++  handle      String   // TG/Email
++  source      String
++  status      String   @default("NEW")
++  notes       String?
++  lastContact DateTime?
++  createdAt   DateTime @default(now())
++  projectId   String
++  project     Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
++  contentTouches LeadContentTouch[]
++}
++
++model AIFeedback {
++  id          String   @id @default(uuid())
++  pattern     String
++  antiPattern String
++  correction  String
++  createdAt   DateTime @default(now())
++  updatedAt   DateTime @updatedAt
++}
++
++model ContentPost {
++  id          String    @id @default(uuid())
++  title       String
++  content     String?
++  status      String    @default("DRAFT") // Статусы: DRAFT, APPROVED, PUBLISHED
++  scheduledAt DateTime?
++  projectId   String
++  createdAt   DateTime  @default(now())
++  updatedAt   DateTime  @updatedAt
++  project     Project   @relation(fields: [projectId], references: [id], onDelete: Cascade)
++  metrics     ContentMetrics?
++  leadTouches LeadContentTouch[]
++}
++
++model OutreachTemplate {
++  id        String   @id @default(uuid())
++  name      String
++  content   String   // Текст с переменными: {name}, {username}
++  projectId String
++  project   Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
++  createdAt DateTime @default(now())
++  updatedAt DateTime @updatedAt
++  logs      OutreachLog[]
++}
++
++model OutreachLog {
++  id         String           @id @default(uuid())
++  leadId     String
++  templateId String
++  message    String           // итоговый текст после подстановки
++  status     String           @default("SENT") // SENT | FAILED
++  createdAt  DateTime         @default(now())
++  template   OutreachTemplate @relation(fields: [templateId], references: [id])
++}
++
++// --- Система самообучения (см. CLAUDE_1.md) ---
++// Схема — задел на будущее. Сбор/анализ данных пока не реализованы.
++
++model ContentMetrics {
++  id          String      @id @default(uuid())
++  postId      String      @unique
++  platform    String      // TG | Threads | IG
++  views       Int         @default(0)
++  reactions   Int         @default(0)
++  clicks      Int         @default(0)
++  collectedAt DateTime    @default(now())
++  post        ContentPost @relation(fields: [postId], references: [id], onDelete: Cascade)
++}
++
++model LeadContentTouch {
++  id        String      @id @default(uuid())
++  leadId    String
++  postId    String
++  result    String?     // OPENED | REPLIED | CONVERTED
++  touchedAt DateTime    @default(now())
++  lead      Lead        @relation(fields: [leadId], references: [id], onDelete: Cascade)
++  post      ContentPost @relation(fields: [postId], references: [id], onDelete: Cascade)
++}
++
++model LearningInsight {
++  id          String   @id @default(uuid())
++  projectId   String
++  module      String   // 'content' | 'sales' — тип инсайта
++  title       String
++  description String
++  dataPoints  Int      @default(0) // сколько событий/метрик лежит в основе
++  confidence  Float    @default(0) // 0-1
++  status      String   @default("pending") // pending | noted | dismissed
++  createdAt   DateTime @default(now())
++  project     Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
++}
++// --- Модуль "Трафик" (арбитраж/закупка) ---
++// Учёт связок "источник × креатив": клики, конверсии, ROI.
++
++model TrackingLink {
++  id          String       @id @default(uuid())
++  projectId   String
++  slug        String       @unique // короткий код для /go/:slug
++  name        String       // имя связки для дашборда
++  source      String       // площадка: tg_kanal_x, vk_ads, seeding...
++  creative    String?      // метка креатива/поста
++  targetUrl   String       // куда ведём трафик
++  cost        Float        @default(0) // расход на размещение, вносится вручную
++  createdAt   DateTime     @default(now())
++  updatedAt   DateTime     @updatedAt
++  project     Project      @relation(fields: [projectId], references: [id], onDelete: Cascade)
++  clicks      ClickEvent[]
++  conversions Conversion[]
++}
++
++model ClickEvent {
++  id          String       @id @default(uuid()) // передаётся дальше как clickid
++  linkId      String
++  ip          String?
++  userAgent   String?
++  referer     String?
++  createdAt   DateTime     @default(now())
++  link        TrackingLink @relation(fields: [linkId], references: [id], onDelete: Cascade)
++  conversions Conversion[]
++}
++
++model Conversion {
++  id        String       @id @default(uuid())
++  linkId    String
++  clickId   String?
++  type      String       // REGISTRATION | DEPOSIT | OTHER
++  payout    Float        @default(0) // выплата от партнёрки
++  raw       String?      // сырой querystring постбека для отладки
++  createdAt DateTime     @default(now())
++  link      TrackingLink @relation(fields: [linkId], references: [id], onDelete: Cascade)
++  click     ClickEvent?  @relation(fields: [clickId], references: [id], onDelete: SetNull)
++}
+--- /dev/null
++++ b/apps/api/prisma/migrations/20261013165000_restore_missing_schema/migration.sql
+@@ -0,0 +1,113 @@
++-- Restore changes that existed only in dev.db; preserve legacy Lead.contact as handle.
++-- AlterTable
++ALTER TABLE "Project" ADD COLUMN "brandVoice" TEXT;
++ALTER TABLE "Project" ADD COLUMN "dna" TEXT;
++ALTER TABLE "Project" ADD COLUMN "planGenerationDay" INTEGER;
++ALTER TABLE "Project" ADD COLUMN "sourceUrl" TEXT;
++ALTER TABLE "Project" ADD COLUMN "tgBotToken" TEXT;
++ALTER TABLE "Project" ADD COLUMN "tgChatId" TEXT;
++
++-- CreateTable
++CREATE TABLE "MarketInsight" (
++    "id" TEXT NOT NULL PRIMARY KEY,
++    "projectId" TEXT NOT NULL,
++    "content" TEXT NOT NULL,
++    "category" TEXT NOT NULL,
++    "source" TEXT,
++    "createdAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
++    CONSTRAINT "MarketInsight_projectId_fkey" FOREIGN KEY ("projectId") REFERENCES "Project" ("id") ON DELETE CASCADE ON UPDATE CASCADE
++);
++
++-- CreateTable
++CREATE TABLE "Integration" (
++    "id" TEXT NOT NULL PRIMARY KEY,
++    "projectId" TEXT NOT NULL,
++    "platform" TEXT NOT NULL,
++    "config" TEXT NOT NULL,
++    "createdAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
++    "updatedAt" DATETIME NOT NULL,
++    CONSTRAINT "Integration_projectId_fkey" FOREIGN KEY ("projectId") REFERENCES "Project" ("id") ON DELETE CASCADE ON UPDATE CASCADE
++);
++
++-- CreateTable
++CREATE TABLE "ContentPost" (
++    "id" TEXT NOT NULL PRIMARY KEY,
++    "title" TEXT NOT NULL,
++    "content" TEXT,
++    "status" TEXT NOT NULL DEFAULT 'DRAFT',
++    "scheduledAt" DATETIME,
++    "projectId" TEXT NOT NULL,
++    "createdAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
++    "updatedAt" DATETIME NOT NULL,
++    CONSTRAINT "ContentPost_projectId_fkey" FOREIGN KEY ("projectId") REFERENCES "Project" ("id") ON DELETE CASCADE ON UPDATE CASCADE
++);
++
++-- CreateTable
++CREATE TABLE "OutreachTemplate" (
++    "id" TEXT NOT NULL PRIMARY KEY,
++    "name" TEXT NOT NULL,
++    "content" TEXT NOT NULL,
++    "projectId" TEXT NOT NULL,
++    "createdAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
++    "updatedAt" DATETIME NOT NULL,
++    CONSTRAINT "OutreachTemplate_projectId_fkey" FOREIGN KEY ("projectId") REFERENCES "Project" ("id") ON DELETE CASCADE ON UPDATE CASCADE
++);
++
++-- CreateTable
++CREATE TABLE "OutreachLog" (
++    "id" TEXT NOT NULL PRIMARY KEY,
++    "leadId" TEXT NOT NULL,
++    "templateId" TEXT NOT NULL,
++    "message" TEXT NOT NULL,
++    "status" TEXT NOT NULL DEFAULT 'SENT',
++    "createdAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
++    CONSTRAINT "OutreachLog_templateId_fkey" FOREIGN KEY ("templateId") REFERENCES "OutreachTemplate" ("id") ON DELETE RESTRICT ON UPDATE CASCADE
++);
++
++-- RedefineTables
++PRAGMA defer_foreign_keys=ON;
++PRAGMA foreign_keys=OFF;
++CREATE TABLE "new_ContentMetrics" (
++    "id" TEXT NOT NULL PRIMARY KEY,
++    "postId" TEXT NOT NULL,
++    "platform" TEXT NOT NULL,
++    "views" INTEGER NOT NULL DEFAULT 0,
++    "reactions" INTEGER NOT NULL DEFAULT 0,
++    "clicks" INTEGER NOT NULL DEFAULT 0,
++    "collectedAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
++    CONSTRAINT "ContentMetrics_postId_fkey" FOREIGN KEY ("postId") REFERENCES "ContentPost" ("id") ON DELETE CASCADE ON UPDATE CASCADE
++);
++INSERT INTO "new_ContentMetrics" ("clicks", "collectedAt", "id", "platform", "postId", "reactions", "views") SELECT "clicks", "collectedAt", "id", "platform", "postId", "reactions", "views" FROM "ContentMetrics";
++DROP TABLE "ContentMetrics";
++ALTER TABLE "new_ContentMetrics" RENAME TO "ContentMetrics";
++CREATE UNIQUE INDEX "ContentMetrics_postId_key" ON "ContentMetrics"("postId");
++CREATE TABLE "new_Lead" (
++    "id" TEXT NOT NULL PRIMARY KEY,
++    "name" TEXT NOT NULL,
++    "handle" TEXT NOT NULL,
++    "source" TEXT NOT NULL,
++    "status" TEXT NOT NULL DEFAULT 'NEW',
++    "notes" TEXT,
++    "lastContact" DATETIME,
++    "createdAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
++    "projectId" TEXT NOT NULL,
++    CONSTRAINT "Lead_projectId_fkey" FOREIGN KEY ("projectId") REFERENCES "Project" ("id") ON DELETE CASCADE ON UPDATE CASCADE
++);
++INSERT INTO "new_Lead" ("createdAt", "id", "name", "projectId", "source", "status", "handle") SELECT "createdAt", "id", "name", "projectId", "source", "status", "contact" FROM "Lead";
++DROP TABLE "Lead";
++ALTER TABLE "new_Lead" RENAME TO "Lead";
++CREATE TABLE "new_LeadContentTouch" (
++    "id" TEXT NOT NULL PRIMARY KEY,
++    "leadId" TEXT NOT NULL,
++    "postId" TEXT NOT NULL,
++    "result" TEXT,
++    "touchedAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
++    CONSTRAINT "LeadContentTouch_leadId_fkey" FOREIGN KEY ("leadId") REFERENCES "Lead" ("id") ON DELETE CASCADE ON UPDATE CASCADE,
++    CONSTRAINT "LeadContentTouch_postId_fkey" FOREIGN KEY ("postId") REFERENCES "ContentPost" ("id") ON DELETE CASCADE ON UPDATE CASCADE
++);
++INSERT INTO "new_LeadContentTouch" ("id", "leadId", "postId", "result", "touchedAt") SELECT "id", "leadId", "postId", "result", "touchedAt" FROM "LeadContentTouch";
++DROP TABLE "LeadContentTouch";
++ALTER TABLE "new_LeadContentTouch" RENAME TO "LeadContentTouch";
++PRAGMA foreign_keys=ON;
++PRAGMA defer_foreign_keys=OFF;
++
+--- /dev/null
++++ b/apps/api/prisma/migrations/20261013170000_postback_idempotency/migration.sql
+@@ -0,0 +1,3 @@
++-- Existing historical rows keep NULL; do not reset or deduplicate old data.
++ALTER TABLE "Conversion" ADD COLUMN "externalId" TEXT;
++CREATE UNIQUE INDEX "Conversion_externalId_key" ON "Conversion"("externalId");
+--- a/apps/api/prisma/schema.prisma
++++ b/apps/api/prisma/schema.prisma
+@@ -184,6 +184,7 @@
+ }
+ 
+ model Conversion {
++  externalId String? @unique // partner event ID; old rows remain valid
+   id        String       @id @default(uuid())
+   linkId    String
+   clickId   String?
+--- /dev/null
++++ b/apps/api/scripts/upgrade-db.cjs
+@@ -0,0 +1,35 @@
++const { PrismaClient } = require('@prisma/client');
++const { spawnSync } = require('node:child_process');
++const path = require('node:path');
++require('dotenv').config({ path: path.resolve(__dirname, '../.env'), quiet: true });
++const cli = path.resolve(__dirname, '../node_modules/prisma/build/index.js');
++const cwd = path.resolve(__dirname, '..');
++const migration = '20261013165000_restore_missing_schema';
++function run(args, acceptable = [0]) {
++  const result = spawnSync(process.execPath, [cli, ...args], { cwd, env: process.env, encoding: 'utf8' });
++  if (!acceptable.includes(result.status)) throw new Error('Команда Prisma не выполнена; проверьте схему и журнал локально.');
++  return result;
++}
++(async () => {
++  if (!process.env.DATABASE_URL?.startsWith('file:')) throw new Error('Укажите SQLite DATABASE_URL');
++  // SQLite file: paths are relative to prisma/schema.prisma, not the CLI cwd.
++  const databasePath = process.env.DATABASE_URL.slice(5);
++  if (databasePath.includes('?')) throw new Error('Используйте SQLite URL без query-параметров для обновления');
++  process.env.DATABASE_URL = `file:${path.resolve(cwd, 'prisma', databasePath)}`;
++  const prisma = new PrismaClient();
++  try {
++    const columns = await prisma.$queryRawUnsafe('PRAGMA table_info("Project")');
++    if (columns.length && !process.argv.includes('--backup-confirmed'))
++      throw new Error('Остановите API и сделайте резервную копию SQLite. Затем повторите с --backup-confirmed.');
++    const applied = columns.length ? await prisma.$queryRawUnsafe('SELECT migration_name FROM "_prisma_migrations" WHERE finished_at IS NOT NULL AND rolled_back_at IS NULL') : [];
++    if (!applied.some(row => row.migration_name === migration) && columns.some(row => row.name === 'dna')) {
++      const result = run(['migrate', 'diff', '--from-url', process.env.DATABASE_URL, '--to-schema-datamodel', 'prisma/legacy-schema-check.prisma', '--exit-code'], [0, 2]);
++      if (result.status !== 0) throw new Error('Старая БД отличается от проверенной схемы. Автоматическое обновление остановлено; не используйте reset.');
++      await prisma.$disconnect();
++      run(['migrate', 'resolve', '--applied', migration]);
++    }
++    await prisma.$disconnect();
++    run(['migrate', 'deploy']);
++    console.log('Миграции применены. Данные не сбрасывались.');
++  } finally { await prisma.$disconnect(); }
++})().catch(error => { console.error(error.message); process.exitCode = 1; });
+--- a/apps/api/src/index.ts
++++ b/apps/api/src/index.ts
+@@ -1,5 +1,7 @@
+ import express from 'express';
++import { errorHandler } from './shared/middleware/http';
+ import cors from 'cors';
++import { localAccess, localOrigins } from './shared/middleware/local-access';
+ import { config } from './shared/lib/config';
+ import { projectsRouter } from './modules/projects/projects.router';
+ import { leadsRouter } from './modules/leads/leads.router';
+@@ -14,13 +16,15 @@
+ const app = express();
+ const PORT = config.port;
+ 
++app.use(localAccess);
+ app.use(cors({
+-  origin: ['http://localhost:3000', 'http://localhost:5173', 'http://127.0.0.1:5173', 'http://127.0.0.1:3000'],
++  origin: localOrigins,
+   methods: ['GET', 'POST', 'PATCH', 'DELETE', 'OPTIONS'],
+   allowedHeaders: ['Content-Type', 'Authorization'],
+   credentials: true
+ }));
+-app.use(express.json());
++app.disable('x-powered-by');
++app.use(express.json({ limit: '64kb' }));
+ 
+ app.get('/', (req, res) => {
+   res.send('Server is alive!');
+@@ -38,7 +42,9 @@
+ app.use('/go', goRouter);
+ 
+ 
+-app.listen(PORT, () => {
++app.use(errorHandler);
++
++app.listen(PORT, config.host, () => {
+   console.log(`Server is running on http://localhost:${PORT}`);
+   initScheduler();
+ });
+--- a/apps/api/src/modules/ai/ai.controller.ts
++++ b/apps/api/src/modules/ai/ai.controller.ts
+@@ -1,6 +1,7 @@
+ import { Request, Response, RequestHandler } from 'express';
+ import { aiService } from './ai.service';
+ import { ChatDto } from './ai.types';
++import { z } from 'zod';
+ 
+ const asyncHandler = (fn: RequestHandler): RequestHandler => 
+   (req, res, next) => Promise.resolve(fn(req, res, next)).catch(next);
+@@ -8,7 +9,7 @@
+ export const aiController = {
+   chat: asyncHandler(async (req: Request, res: Response) => {
+     // Валидация вынесена в роутер (ai.schema) - здесь мы просто берем данные
+-    const dto: ChatDto = req.body;
++    const dto: ChatDto = z.object({ message: z.string().trim().min(1).max(4000), projectId: z.string().uuid() }).parse(req.body);
+ 
+     if (!dto.message || !dto.projectId) {
+       return res.status(400).json({
+@@ -28,7 +29,7 @@
+   }),
+ 
+   extractInsight: asyncHandler(async (req: Request, res: Response) => {
+-    const { message } = req.body;
++    const { message } = z.object({ message: z.string().trim().min(1).max(8000) }).parse(req.body);
+     if (!message) {
+       return res.status(400).json({ data: null, error: { message: 'Message is required', code: 'BAD_REQUEST' }, meta: null });
+     }
+--- a/apps/api/src/modules/ai/ai.service.ts
++++ b/apps/api/src/modules/ai/ai.service.ts
+@@ -1,3 +1,4 @@
++import { z } from 'zod';
+ import { aiProvider } from '../../shared/ai';
+ import { ProjectsRepository, Project } from '../projects/projects.repository';
+ import { ChatDto } from './ai.types';
+@@ -53,6 +54,6 @@
+       { role: 'user', content: prompt }
+     ], { temperature: 0.3 });
+ 
+-    return JSON.parse(content || '{}');
++    return z.object({ content: z.string().trim().min(1), category: z.enum(['боль', 'запрос', 'тренд']), source: z.string().url().nullable().optional() }).parse(JSON.parse(content || '{}'));
+   }
+ };
+--- a/apps/api/src/modules/content/content.controller.ts
++++ b/apps/api/src/modules/content/content.controller.ts
+@@ -1,11 +1,10 @@
+ import { Request, Response } from 'express';
+ import { ContentService } from './content.service';
+-import { telegramService } from '../telegram/telegram.service';
+-import { PublishService } from '../../publish.service';
+-import { PrismaClient } from '@prisma/client';
++import { generatePostSchema, updatePostSchema } from './content.schema';
++import { z } from 'zod';
+ 
+ const contentService = new ContentService();
+-const prisma = new PrismaClient();
++
+ 
+ export class ContentController {
+   async generatePlan(req: Request, res: Response): Promise<void> {
+@@ -32,7 +31,7 @@
+ 
+   async generatePost(req: Request, res: Response): Promise<void> {
+     try {
+-      const { postId, strategy } = req.body;
++      const { postId, strategy } = generatePostSchema.parse(req.body);
+       const post = await contentService.generatePost(postId, strategy);
+       res.status(200).json({ success: true, data: post });
+     } catch (error) {
+@@ -46,7 +45,7 @@
+       const { id } = req.params;
+       await contentService.deletePost(id);
+       res.json({ success: true, message: 'Сегмент удален' });
+-    } catch (e) { res.status(500).json({ success: false }); }
++    } catch (e) { res.status(e instanceof z.ZodError ? 400 : 409).json({ success: false, message: e instanceof z.ZodError ? 'Некорректные данные' : 'Операция недоступна для этого поста' }); }
+   }
+ 
+   async clearQueue(req: Request, res: Response): Promise<void> {
+@@ -54,33 +53,30 @@
+       const { id: projectId } = req.params;
+       await contentService.clearProjectQueue(projectId);
+       res.json({ success: true, message: 'Очередь очищена' });
+-    } catch (e) { res.status(500).json({ success: false }); }
++    } catch (e) { res.status(e instanceof z.ZodError ? 400 : 409).json({ success: false, message: e instanceof z.ZodError ? 'Некорректные данные' : 'Операция недоступна для этого поста' }); }
+   }
+ 
+   async updatePost(req: Request, res: Response): Promise<void> {
+     try {
+       const { id } = req.params;
+-      const { title, content, scheduledAt } = req.body;
++      const { title, content, scheduledAt } = updatePostSchema.parse(req.body);
+       const post = await contentService.updatePost(id, {
+         title,
+         content,
+-        scheduledAt: scheduledAt ? new Date(scheduledAt) : undefined
++        scheduledAt: scheduledAt === null ? null : scheduledAt ? new Date(scheduledAt) : undefined
+       });
+       res.json({ success: true, data: post });
+-    } catch (e) { res.status(500).json({ success: false }); }
++    } catch (e) { res.status(e instanceof z.ZodError ? 400 : 409).json({ success: false, message: e instanceof z.ZodError ? 'Некорректные данные' : 'Операция недоступна для этого поста' }); }
+   }
+ 
+   // НАШ НОВЫЙ МЕТОД
+   async approvePost(req: Request, res: Response): Promise<void> {
+     try {
+       const { id } = req.params;
+-      await prisma.contentPost.update({
+-        where: { id },
+-        data: { status: 'APPROVED', updatedAt: new Date() }
+-      });
++      await contentService.approvePost(id);
+       res.status(200).json({ success: true, message: 'Пост одобрен' });
+     } catch (error) {
+-      res.status(500).json({ success: false, message: 'Ошибка при апруве' });
++      res.status(409).json({ success: false, message: 'Нельзя одобрить пустой, отправляемый или опубликованный пост' });
+     }
+   }
+ }--- a/apps/api/src/modules/content/content.scheduler.ts
++++ b/apps/api/src/modules/content/content.scheduler.ts
+@@ -1,62 +1,2 @@
+-import cron from 'node-cron';
+-import { prisma } from '../../shared/lib/prisma';
+-import { telegramService } from '../telegram/telegram.service';
+-
+-export const initContentScheduler = () => {
+-  console.log('🚀 Scheduler initialized (every minute)');
+-  
+-  cron.schedule('* * * * *', async () => {
+-    try {
+-      const postsToPublish = await prisma.contentPost.findMany({
+-        where: {
+-          status: 'APPROVED',
+-          // В будущем можно добавить проверку scheduledAt <= new Date()
+-        },
+-        include: {
+-          project: {
+-            include: {
+-              integrations: true
+-            }
+-          }
+-        }
+-      });
+-
+-      if (postsToPublish.length === 0) return;
+-
+-      console.log(`📡 Found ${postsToPublish.length} posts to publish`);
+-
+-      for (const post of postsToPublish) {
+-        const tgIntegration = post.project.integrations.find(i => i.platform === 'TELEGRAM');
+-        
+-        if (!tgIntegration) {
+-          console.warn(`⚠️ No Telegram integration for project ${post.projectId}`);
+-          continue;
+-        }
+-
+-        const config = JSON.parse(tgIntegration.config);
+-        const { token, chatId } = config;
+-
+-        if (!token || !chatId) {
+-          console.error(`❌ Invalid Telegram config for project ${post.projectId}`);
+-          continue;
+-        }
+-
+-        if (!post.content) {
+-          console.error(`❌ Post ${post.id} has no content`);
+-          continue;
+-        }
+-
+-        await telegramService.sendMessage(token, chatId, post.content);
+-
+-        await prisma.contentPost.update({
+-          where: { id: post.id },
+-          data: { status: 'PUBLISHED' }
+-        });
+-
+-        console.log(`✅ Post ${post.id} published to Telegram`);
+-      }
+-    } catch (error) {
+-      console.error('❌ Scheduler Error:', error);
+-    }
+-  });
+-};
++// Совместимость со старым импортом. Одна реализация вместо двух разных планировщиков.
++export { initScheduler as initContentScheduler } from '../../scheduler.service';
+--- /dev/null
++++ b/apps/api/src/modules/content/content.schema.ts
+@@ -0,0 +1,14 @@
++import { z } from 'zod';
++export const generatePostSchema = z.object({
++  postId: z.string().uuid(),
++  strategy: z.enum(['PAIN_SOLVE', 'STORYTELLING']).optional(),
++});
++export const updatePostSchema = z.object({
++  title: z.string().trim().min(1).max(300).optional(),
++  content: z.string().max(4096).nullable().optional(),
++  scheduledAt: z.string().datetime({ offset: true }).nullable().optional(),
++}).strict().refine(data => Object.keys(data).length > 0, 'Изменения отсутствуют');
++export const weeklyPlanSchema = z.array(z.object({
++  title: z.string().trim().min(1).max(300),
++  content: z.string().trim().min(1).max(4096),
++})).length(7);
+--- a/apps/api/src/modules/content/content.service.ts
++++ b/apps/api/src/modules/content/content.service.ts
+@@ -1,3 +1,4 @@
++import { weeklyPlanSchema } from './content.schema';
+ import { prisma } from '../../shared/lib/prisma';
+ import { aiProvider } from '../../shared/ai';
+ import { telegramSkill } from './skills/telegram.skill';
+@@ -83,14 +84,8 @@
+ `.trim();
+ 
+     const planJson = await aiProvider.generateText(planPrompt, { temperature: 0.8 });
+-    let plans: any[] = [];
+-    try {
+-        plans = JSON.parse(planJson);
+-    } catch (e) {
+-        // Fallback если ИИ вернул не чистый JSON
+-        const match = planJson.match(/\[.*\]/s);
+-        if (match) plans = JSON.parse(match[0]);
+-    }
++    const cleanJson = planJson.trim().replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/, '');
++    const plans = weeklyPlanSchema.parse(JSON.parse(cleanJson));
+ 
+     const now = new Date();
+     const postsData = plans.slice(0, 7).map((plan, index) => {
+@@ -132,6 +127,7 @@
+     });
+ 
+     if (!post) throw new Error('Post not found');
++    if (!['DRAFT', 'APPROVED'].includes(post.status)) throw new Error('Пост недоступен для генерации');
+ 
+     const { dna, targetAudience, brandVoice } = post.project;
+     const baseInstructions = await this.enhanceRequest(post.title);
+@@ -152,23 +148,21 @@
+ 
+     const finalPrompt = [
+         ...baseInstructions, 
++        this.strategyPrompts[strategy],
+         diversityPrompt, 
+         dnaPrompt
+     ].join('\n\n');
+ 
+     const generatedContent = await aiProvider.generateText(finalPrompt, { temperature: 0.8 });
+ 
+-    return prisma.contentPost.update({
+-      where: { id: postId },
+-      data: {
+-        content: generatedContent,
+-        status: 'DRAFT'
+-      }
+-    });
++    await this.updatePost(postId, { content: generatedContent }, post.updatedAt);
++    return prisma.contentPost.findUniqueOrThrow({ where: { id: postId } });
+   }
+ 
+   async deletePost(id: string) {
+-    return prisma.contentPost.delete({ where: { id } });
++    const result = await prisma.contentPost.deleteMany({ where: { id, status: { in: ['DRAFT', 'APPROVED'] } } });
++    if (result.count !== 1) throw new Error('Пост недоступен для удаления');
++    return result;
+   }
+ 
+   async clearProjectQueue(projectId: string) {
+@@ -180,10 +174,22 @@
+     });
+   }
+ 
+-  async updatePost(id: string, data: any) {
+-    return prisma.contentPost.update({
+-      where: { id },
+-      data
++  async approvePost(id: string) {
++    const post = await prisma.contentPost.findUnique({ where: { id } });
++    if (!post?.content?.trim()) throw new Error('Нельзя одобрить пустой пост');
++    const result = await prisma.contentPost.updateMany({
++      where: { id, status: { in: ['DRAFT', 'APPROVED'] }, updatedAt: post.updatedAt },
++      data: { status: 'APPROVED' },
+     });
++    if (result.count !== 1) throw new Error('Пост нельзя одобрить');
++  }
++
++  async updatePost(id: string, data: { title?: string; content?: string | null; scheduledAt?: Date | null }, updatedAt?: Date) {
++    const result = await prisma.contentPost.updateMany({
++      where: { id, status: { in: ['DRAFT', 'APPROVED'] }, ...(updatedAt ? { updatedAt } : {}) },
++      data: { ...data, ...(data.content !== undefined || data.title !== undefined ? { status: 'DRAFT' } : {}) },
++    });
++    if (result.count !== 1) throw new Error('Пост изменён или недоступен для редактирования');
++    return prisma.contentPost.findUniqueOrThrow({ where: { id } });
+   }
+ }
+--- a/apps/api/src/modules/leads/leads.repository.ts
++++ b/apps/api/src/modules/leads/leads.repository.ts
+@@ -1,7 +1,8 @@
+-import { PrismaClient, Lead } from '@prisma/client';
++import { Lead } from '@prisma/client';
++import { prisma } from '../../shared/lib/prisma';
+ import { CreateLeadInput } from './leads.schema';
+ 
+-const prisma = new PrismaClient();
++
+ 
+ export class LeadsRepository {
+   async create(data: CreateLeadInput): Promise<Lead> {
+--- a/apps/api/src/modules/market/market.controller.ts
++++ b/apps/api/src/modules/market/market.controller.ts
+@@ -1,20 +1,22 @@
+ import { Request, Response } from 'express';
+ import { marketService } from './market.service';
++import { createInsightSchema, scanMarketSchema } from './market.schema';
++import { z } from 'zod';
+ 
+ export const marketController = {
+   create: async (req: Request, res: Response) => {
+-    const insight = await marketService.createInsight(req.body);
++    const insight = await marketService.createInsight(createInsightSchema.parse({ body: req.body }).body);
+     res.status(201).json({ data: insight, error: null, meta: null });
+   },
+ 
+   getAllByProject: async (req: Request, res: Response) => {
+-    const { projectId } = req.query;
++    const projectId = z.string().uuid().parse(req.query.projectId);
+     const insights = await marketService.getInsightsByProject(projectId as string);
+     res.json({ data: insights, error: null, meta: { count: insights.length } });
+   },
+ 
+   scan: async (req: Request, res: Response) => {
+-    const { url } = req.body;
++    const { url } = scanMarketSchema.parse({ body: req.body }).body;
+     const rawText = await marketService.fetchRawText(url);
+     const intelligence = await marketService.extractIntelligence(rawText);
+ 
+--- a/apps/api/src/modules/market/market.router.ts
++++ b/apps/api/src/modules/market/market.router.ts
+@@ -1,11 +1,12 @@
+ import { Router } from 'express';
++import { asyncHandler } from '../../shared/middleware/http';
+ import { marketController } from './market.controller';
+ // Импортируем валидатор, если он есть в shared. Предположим, он там есть согласно правилам.
+ // Если нет, я создам его позже.
+ const router = Router();
+ 
+-router.post('/insights', marketController.create);
+-router.get('/insights', marketController.getAllByProject);
+-router.post('/scan', marketController.scan);
++router.post('/insights', asyncHandler(marketController.create));
++router.get('/insights', asyncHandler(marketController.getAllByProject));
++router.post('/scan', asyncHandler(marketController.scan));
+ 
+ export const marketRouter = router;
+--- a/apps/api/src/modules/market/market.schema.ts
++++ b/apps/api/src/modules/market/market.schema.ts
+@@ -5,7 +5,7 @@
+     projectId: z.string().uuid(),
+     content: z.string().min(1),
+     category: z.string().min(1), // боль / запрос / тренд
+-    source: z.string().url().optional().or(z.literal('')),
++    source: z.string().url().optional().nullable().or(z.literal('')),
+   })
+ });
+ 
+--- a/apps/api/src/modules/market/market.service.ts
++++ b/apps/api/src/modules/market/market.service.ts
+@@ -1,4 +1,5 @@
+-import axios from 'axios';
++import { z } from 'zod';
++import { fetchPublicHtml } from '../../shared/lib/public-web';
+ import { aiProvider } from '../../shared/ai';
+ import { marketRepository } from './market.repository';
+ import { CreateInsightDto, MarketInsight, MarketIntelligence } from './market.types';
+@@ -18,14 +19,7 @@
+ 
+   fetchRawText: async (url: string): Promise<string> => {
+     try {
+-      const response = await axios.get(url, {
+-        timeout: 10000,
+-        headers: {
+-          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
+-        }
+-      });
+-
+-      const html = response.data;
++      const html = await fetchPublicHtml(url);
+       if (typeof html !== 'string') return '';
+ 
+       let text = html
+@@ -67,13 +61,9 @@
+     try {
+       const content = rawContent || '{}';
+       const cleanJson = content.replace(/```json|```/g, '').trim();
+-      return JSON.parse(cleanJson);
++      return z.object({ dna: z.string().trim().min(1), brandVoice: z.string().trim().min(1) }).parse(JSON.parse(cleanJson));
+     } catch (e) {
+-      console.error('OpenAI Parsing Error:', e);
+-      return { 
+-        dna: "Ошибка извлечения DNA", 
+-        brandVoice: "Ошибка извлечения Brand Voice" 
+-      };
++      throw new Error('AI вернул некорректный формат анализа');
+     }
+   }
+ };
+--- a/apps/api/src/modules/market/market.types.ts
++++ b/apps/api/src/modules/market/market.types.ts
+@@ -11,7 +11,7 @@
+   projectId: string;
+   content: string;
+   category: string;
+-  source?: string;
++  source?: string | null;
+ }
+ 
+ export interface MarketIntelligence {
+--- a/apps/api/src/modules/outreach/outreach.service.ts
++++ b/apps/api/src/modules/outreach/outreach.service.ts
+@@ -28,14 +28,16 @@
+     // 2. Найти шаблон
+     const template = await outreachRepository.findTemplateById(templateId)
+     if (!template) throw new Error('Шаблон не найден')
++    if (template.projectId !== lead.projectId) throw new Error('Лид и шаблон относятся к разным проектам')
+ 
+     // 3. Проверить токен
+     const { tgBotToken } = lead.project
+     if (!tgBotToken) throw new Error('У проекта не настроен Telegram Bot Token')
+ 
+-    // 4. Telegram chat_id — @username
++    // 4. Личные сообщения доступны только по chat_id пользователя, запустившего бота.
+     const rawContact = lead.handle.trim()
+-    const chatId = rawContact.startsWith('@') ? rawContact : `@${rawContact}`
++    if (!/^\d+$/.test(rawContact)) throw new Error('Для личного сообщения нужен числовой Telegram chat_id пользователя, который уже запустил бота. Отправка по @username не поддерживается.');
++    const chatId = rawContact
+ 
+     // 5. Подставить переменные
+     const message = interpolate(template.content, {
+@@ -48,15 +50,18 @@
+     try {
+       await axios.post(
+         `https://api.telegram.org/bot${tgBotToken}/sendMessage`,
+-        { chat_id: chatId, text: message, parse_mode: 'HTML' },
++        { chat_id: chatId, text: message },
++        { timeout: 10000 },
+       )
+     } catch (err) {
+       status = 'FAILED'
+-      console.error('Failed to send outreach message', { err, leadId, templateId })
++      console.error('Failed to send outreach message', { leadId, templateId })
+     }
+ 
+     // 7. Записать лог
+     await outreachRepository.logMessage(leadId, templateId, message, status)
++
++    if (status === 'SENT') await prisma.lead.update({ where: { id: leadId }, data: { lastContact: new Date() } });
+ 
+     if (status === 'FAILED') {
+       throw new Error('Сообщение не удалось отправить в Telegram')
+@@ -101,6 +106,7 @@
+         });
+ 
+     if (!project || !lead) throw new Error('Project or Lead not found');
++    if (lead.projectId !== project.id || (insight && insight.projectId !== project.id)) throw new Error('Лид или инсайт относится к другому проекту');
+ 
+     const prompt = `
+ Ты — AI Sales Агент в системе Growth OS. Твоя задача — написать короткое, цепляющее и крайне персонализированное сообщение в Telegram/Email.
+--- a/apps/api/src/modules/projects/projects.controller.ts
++++ b/apps/api/src/modules/projects/projects.controller.ts
+@@ -4,6 +4,10 @@
+ import { z } from 'zod';
+ 
+ const projectsService = new ProjectsService();
++function publicProject(project: Awaited<ReturnType<ProjectsService['createProject']>>) {
++  const { tgBotToken, ...safe } = project;
++  return { ...safe, hasTelegramToken: Boolean(tgBotToken) };
++}
+ 
+ export class ProjectsController {
+   async create(req: Request, res: Response): Promise<void> {
+@@ -11,7 +15,7 @@
+       const validatedData = createProjectSchema.parse({ body: req.body });
+       const project = await projectsService.createProject(validatedData.body);
+       
+-      res.status(201).json({ success: true, data: project });
++      res.status(201).json({ success: true, data: publicProject(project) });
+     } catch (error) {
+       if (error instanceof z.ZodError) {
+         res.status(400).json({ success: false, errors: error.errors });
+@@ -25,7 +29,7 @@
+     try {
+       const projects = await projectsService.getAllProjects();
+       
+-      res.status(200).json({ success: true, data: projects });
++      res.status(200).json({ success: true, data: projects.map(publicProject) });
+     } catch (error) {
+       res.status(500).json({ success: false, message: 'Internal server error' });
+     }
+@@ -37,7 +41,7 @@
+       const validatedData = updateProjectSchema.parse({ body: req.body });
+       const project = await projectsService.updateProject(id, validatedData.body);
+       
+-      res.status(200).json({ success: true, data: project });
++      res.status(200).json({ success: true, data: publicProject(project) });
+     } catch (error) {
+       if (error instanceof z.ZodError) {
+         res.status(400).json({ success: false, errors: error.errors });
+--- a/apps/api/src/modules/projects/projects.repository.ts
++++ b/apps/api/src/modules/projects/projects.repository.ts
+@@ -38,7 +38,7 @@
+   async update(id: string, data: UpdateProjectInput): Promise<Project> {
+     return prisma.project.update({
+       where: { id },
+-      data,
++      data: { ...data, tgBotToken: data.tgBotToken?.trim() || undefined },
+     });
+   }
+ 
+--- a/apps/api/src/modules/projects/projects.schema.ts
++++ b/apps/api/src/modules/projects/projects.schema.ts
+@@ -11,7 +11,7 @@
+     sourceUrl: z.string().url().optional().or(z.literal('')),
+     tgBotToken: z.string().optional(),
+     tgChatId: z.string().optional(),
+-    planGenerationDay: z.number().min(0).max(6).optional().nullable(),
++    planGenerationDay: z.number().int().min(0).max(6).optional().nullable(),
+   }),
+ });
+ 
+@@ -26,7 +26,7 @@
+     sourceUrl: z.string().url().optional().or(z.literal('')),
+     tgBotToken: z.string().optional(),
+     tgChatId: z.string().optional(),
+-    planGenerationDay: z.number().min(0).max(6).optional().nullable(),
++    planGenerationDay: z.number().int().min(0).max(6).optional().nullable(),
+   }),
+ });
+ 
+--- a/apps/api/src/modules/telegram/telegram.service.ts
++++ b/apps/api/src/modules/telegram/telegram.service.ts
+@@ -1,22 +1,8 @@
+-import axios from 'axios';
+-
+-export class TelegramService {
+-    private readonly baseUrl = 'https://api.telegram.org/bot';
+-
+-    async sendMessage(token: string, chatId: string, text: string): Promise<void> {
+-        try {
+-            const url = `${this.baseUrl}${token}/sendMessage`;
+-            await axios.post(url, {
+-                chat_id: chatId,
+-                text: text,
+-                parse_mode: 'HTML',
+-            });
+-            console.log(`✅ Сообщение отправлено в чат: ${chatId}`);
+-        } catch (error: any) {
+-            console.error('❌ Ошибка Telegram:', error.response?.data || error.message);
+-            throw new Error('Не удалось отправить сообщение в Telegram');
+-        }
+-    }
+-}
+-
+-export const telegramService = new TelegramService();+import { PublishService } from '../../publish.service';
++// Одна реализация Telegram transport: plain text, timeout и безопасные ошибки.
++export class TelegramService {
++  sendMessage(token: string, chatId: string, text: string): Promise<void> {
++    return PublishService.sendToTelegram(token, chatId, text);
++  }
++}
++export const telegramService = new TelegramService();
+--- a/apps/api/src/modules/traffic/traffic.controller.ts
++++ b/apps/api/src/modules/traffic/traffic.controller.ts
+@@ -68,7 +68,7 @@
+     try {
+       const conv = await trafficService.registerPostback({
+         ...parsed.data.query,
+-        raw: new URLSearchParams(req.query as Record<string, string>).toString(),
++        raw: new URLSearchParams({ clickid: parsed.data.query.clickid, eventid: parsed.data.query.eventid, type: parsed.data.query.type, payout: String(parsed.data.query.payout) }).toString(),
+       });
+       res.json({ data: { id: conv.id }, error: null, meta: null });
+     } catch (e: any) {
+--- a/apps/api/src/modules/traffic/traffic.repository.ts
++++ b/apps/api/src/modules/traffic/traffic.repository.ts
+@@ -1,8 +1,9 @@
++import { randomBytes } from 'node:crypto';
+ import { prisma } from '../../shared/lib/prisma';
+ import { CreateLinkInput, UpdateLinkInput } from './traffic.schema';
+ 
+ function generateSlug(): string {
+-  return Math.random().toString(36).slice(2, 8);
++  return randomBytes(9).toString('base64url');
+ }
+ 
+ export const trafficRepository = {
+@@ -42,12 +43,15 @@
+   findClickById: (id: string) => prisma.clickEvent.findUnique({ where: { id } }),
+ 
+   createConversion: (data: {
++    externalId: string;
+     linkId: string;
+     clickId?: string;
+     type: string;
+     payout: number;
+     raw?: string;
+   }) => prisma.conversion.create({ data }),
++
++  findConversionByExternalId: (externalId: string) => prisma.conversion.findUnique({ where: { externalId } }),
+ 
+   // Агрегаты для дашборда: клики и конверсии по всем связкам проекта
+   clickCountsByLink: (linkIds: string[]) =>
+--- a/apps/api/src/modules/traffic/traffic.router.ts
++++ b/apps/api/src/modules/traffic/traffic.router.ts
+@@ -1,18 +1,20 @@
+ import { Router } from 'express';
++import { asyncHandler } from '../../shared/middleware/http';
++import { postbackAuth } from '../../shared/middleware/postback-auth';
+ import { trafficController } from './traffic.controller';
+ 
+ // /api/traffic/* — управление связками и постбек
+ const router = Router();
+ 
+-router.post('/links', trafficController.createLink);
+-router.get('/links', trafficController.getStats);
+-router.patch('/links/:id', trafficController.updateLink);
+-router.delete('/links/:id', trafficController.deleteLink);
+-router.get('/postback', trafficController.postback);
++router.post('/links', asyncHandler(trafficController.createLink));
++router.get('/links', asyncHandler(trafficController.getStats));
++router.patch('/links/:id', asyncHandler(trafficController.updateLink));
++router.delete('/links/:id', asyncHandler(trafficController.deleteLink));
++router.get('/postback', postbackAuth, asyncHandler(trafficController.postback));
+ 
+ export const trafficRouter = router;
+ 
+ // /go/:slug — публичный редирект, монтируется в корень (не под /api)
+ const redirect = Router();
+-redirect.get('/:slug', trafficController.redirect);
++redirect.get('/:slug', asyncHandler(trafficController.redirect));
+ export const goRouter = redirect;
+--- a/apps/api/src/modules/traffic/traffic.schema.ts
++++ b/apps/api/src/modules/traffic/traffic.schema.ts
+@@ -1,4 +1,5 @@
+ import { z } from 'zod';
++const httpUrl = z.string().url('Неверный URL').refine(value => ['http:', 'https:'].includes(new URL(value).protocol), 'Только HTTP(S)');
+ 
+ export const createLinkSchema = z.object({
+   body: z.object({
+@@ -6,7 +7,7 @@
+     name: z.string().min(1, 'Имя связки обязательно'),
+     source: z.string().min(1, 'Источник обязателен'),
+     creative: z.string().optional().nullable(),
+-    targetUrl: z.string().url('targetUrl должен быть валидным URL'),
++    targetUrl: httpUrl,
+     cost: z.number().min(0).optional(),
+   }),
+ });
+@@ -16,7 +17,7 @@
+     name: z.string().min(1).optional(),
+     source: z.string().min(1).optional(),
+     creative: z.string().optional().nullable(),
+-    targetUrl: z.string().url().optional(),
++    targetUrl: httpUrl.optional(),
+     cost: z.number().min(0).optional(),
+   }),
+ });
+@@ -25,9 +26,10 @@
+ // он же ClickEvent.id, который мы передали в редиректе.
+ export const postbackSchema = z.object({
+   query: z.object({
+-    clickid: z.string().min(1, 'clickid обязателен'),
++    clickid: z.string().uuid('Неверный clickid'),
++    eventid: z.string().trim().min(1).max(128),
+     type: z.enum(['registration', 'deposit', 'other']).default('other'),
+-    payout: z.coerce.number().min(0).default(0),
++    payout: z.coerce.number().finite().min(0).default(0),
+   }),
+ });
+ 
+--- a/apps/api/src/modules/traffic/traffic.service.ts
++++ b/apps/api/src/modules/traffic/traffic.service.ts
+@@ -55,17 +55,28 @@
+   /**
+    * S2S-постбек от партнёрки: привязывает конверсию к клику и связке.
+    */
+-  registerPostback: async (params: { clickid: string; type: string; payout: number; raw?: string }) => {
++  registerPostback: async (params: { clickid: string; eventid: string; type: string; payout: number; raw?: string }) => {
+     const click = await trafficRepository.findClickById(params.clickid);
+     if (!click) throw new Error('Клик с таким clickid не найден');
+ 
+-    return trafficRepository.createConversion({
+-      linkId: click.linkId,
+-      clickId: click.id,
+-      type: params.type.toUpperCase(),
+-      payout: params.payout,
+-      raw: params.raw,
+-    });
++    const data = { externalId: params.eventid, linkId: click.linkId, clickId: click.id,
++      type: params.type.toUpperCase(), payout: params.payout, raw: params.raw };
++    const checkExisting = (existing: { clickId: string | null; type: string; payout: number }) => {
++      if (existing.clickId !== data.clickId || existing.type !== data.type || existing.payout !== data.payout)
++        throw new Error('eventid уже использован для другой конверсии');
++      return existing;
++    };
++    const existing = await trafficRepository.findConversionByExternalId(params.eventid);
++    if (existing) { checkExisting(existing); return existing; }
++    try { return await trafficRepository.createConversion(data); }
++    catch (error) {
++      // Unique DB constraint handles concurrent duplicates, not just sequential retries.
++      if ((error as { code?: string }).code !== 'P2002') throw error;
++      const duplicate = await trafficRepository.findConversionByExternalId(params.eventid);
++      if (!duplicate) throw error;
++      checkExisting(duplicate);
++      return duplicate;
++    }
+   },
+ 
+   /**
+--- /dev/null
++++ b/apps/api/src/publication.service.ts
+@@ -0,0 +1,31 @@
++import { prisma } from './shared/lib/prisma';
++import { AppError } from './shared/lib/AppError';
++import { PublishService } from './publish.service';
++
++export async function publishPost(id: string, scheduled = false) {
++  const post = await prisma.contentPost.findUnique({ where: { id }, include: { project: true } });
++  if (!post) throw new AppError('Пост не найден', 404, 'NOT_FOUND');
++  if (!post.content?.trim()) throw new AppError('Текст поста пуст', 400, 'EMPTY_CONTENT');
++  if (!post.project.tgBotToken || !post.project.tgChatId)
++    throw new AppError('Настройте Telegram в проекте', 400, 'TELEGRAM_NOT_CONFIGURED');
++
++  const claim = await prisma.contentPost.updateMany({
++    where: {
++      id,
++      status: scheduled ? 'APPROVED' : { in: ['DRAFT', 'APPROVED'] },
++      updatedAt: post.updatedAt,
++      ...(scheduled ? { scheduledAt: { lte: new Date() } } : {}),
++    },
++    data: { status: 'PUBLISHING' },
++  });
++  if (claim.count !== 1) throw new AppError('Пост изменён, уже отправляется или опубликован', 409, 'PUBLICATION_CONFLICT');
++
++  try {
++    await PublishService.sendToTelegram(post.project.tgBotToken, post.project.tgChatId, post.content);
++    return await prisma.contentPost.update({ where: { id }, data: { status: 'PUBLISHED' } });
++  } catch {
++    // Таймаут не означает, что Telegram не принял сообщение. НЕ повторяем автоматически.
++    await prisma.contentPost.updateMany({ where: { id, status: 'PUBLISHING' }, data: { status: 'PUBLISH_UNKNOWN' } });
++    throw new AppError('Результат отправки не подтверждён. Проверьте канал перед повторной публикацией.', 502, 'PUBLICATION_UNKNOWN');
++  }
++}
+--- a/apps/api/src/publish.router.ts
++++ b/apps/api/src/publish.router.ts
+@@ -1,77 +1,10 @@
+ import { Router } from 'express';
+-import { prisma } from './shared/lib/prisma';
+-import { PublishService } from './publish.service';
++import { publishPost } from './publication.service';
++import { asyncHandler } from './shared/middleware/http';
+ 
+ const router = Router();
+-
+-/**
+- * POST /api/posts/:id/publish
+- * Отправляет пост в Telegram на основе настроек проекта.
+- */
+-router.post('/:id/publish', async (req: any, res: any) => {
+-  const { id } = req.params;
+-
+-  try {
+-    // 1. Находим пост и включаем проект для получения токенов
+-    const post = await prisma.contentPost.findUnique({
+-      where: { id },
+-      include: {
+-        project: true
+-      }
+-    });
+-
+-    if (!post) {
+-      return res.status(404).json({
+-        success: false,
+-        error: 'Post not found',
+-        data: null
+-      });
+-    }
+-
+-    if (!post.content) {
+-      return res.status(400).json({
+-        success: false,
+-        error: 'Post content is empty',
+-        data: null
+-      });
+-    }
+-
+-    const { tgBotToken, tgChatId } = post.project;
+-
+-    if (!tgBotToken || !tgChatId) {
+-      return res.status(400).json({
+-        success: false,
+-        error: 'Telegram Bot Token or Chat ID not configured for this project',
+-        data: null
+-      });
+-    }
+-
+-    // 2. Отправляем в Telegram
+-    await PublishService.sendToTelegram(tgBotToken, tgChatId, post.content);
+-
+-    // 3. Обновляем статус
+-    const updatedPost = await prisma.contentPost.update({
+-      where: { id },
+-      data: {
+-        status: 'PUBLISHED',
+-        updatedAt: new Date()
+-      }
+-    });
+-
+-    return res.json({
+-      success: true,
+-      message: 'Signal Transmitted',
+-      data: updatedPost
+-    });
+-
+-  } catch (error: any) {
+-    console.error('[PublishRouter] Error:', error);
+-    return res.status(500).json({
+-      success: false,
+-      error: error.message || 'Internal Server Error',
+-      data: null
+-    });
+-  }
+-});
+-
++router.post('/:id/publish', asyncHandler(async (req, res) => {
++  const data = await publishPost(req.params.id);
++  res.json({ success: true, data, error: null, meta: null });
++}));
+ export const publishRouter = router;
+--- a/apps/api/src/publish.service.ts
++++ b/apps/api/src/publish.service.ts
+@@ -1,36 +1,17 @@
+ import axios from 'axios';
+ 
+-/**
+- * Сервис для публикации контента во внешние каналы (Telegram).
+- */
+ export const PublishService = {
+-  /**
+-   * Отправляет сообщение в Telegram напрямую через Bot API.
+-   * Использует tgBotToken и tgChatId из настроек проекта.
+-   */
+   async sendToTelegram(token: string, chatId: string, text: string): Promise<void> {
+-    if (!token || !chatId) {
+-      throw new Error('Telegram Token или Chat ID не настроены в дефолтном проекте');
++    if (!token || !chatId) throw new Error('Telegram не настроен');
++    if (Array.from(text).length > 4096) throw new Error('Текст превышает лимит Telegram 4096 символов');
++    try {
++      const response = await axios.post(`https://api.telegram.org/bot${token}/sendMessage`, {
++        chat_id: chatId, text, // AI генерирует plain text, а не безопасный Telegram HTML
++      }, { timeout: 10000 });
++      if (response.data?.ok !== true) throw new Error('Telegram не подтвердил отправку');
++    } catch {
++      // Axios error содержит URL с токеном: не логируем и не пробрасываем его.
++      throw new Error('Ошибка отправки в Telegram');
+     }
+-
+-    const url = `https://api.telegram.org/bot${token}/sendMessage`;
+-
+-    try {
+-      const response = await axios.post(url, {
+-        chat_id: chatId,
+-        text: text,
+-        parse_mode: 'HTML',
+-      });
+-      console.log(`[PublishService] Telegram API Success for ${chatId}:`, response.data);
+-    } catch (error: any) {
+-      const tgError = error.response?.data;
+-      console.error('[PublishService] Telegram API Error Context:', {
+-        chatId,
+-        error: tgError || error.message,
+-        status: error.response?.status
+-      });
+-      const errorMsg = tgError?.description || error.message;
+-      throw new Error(`Ошибка Telegram: ${errorMsg}`);
+-    }
+-  }
++  },
+ };
+--- a/apps/api/src/scheduler.service.ts
++++ b/apps/api/src/scheduler.service.ts
+@@ -1,66 +1,16 @@
+ import cron from 'node-cron';
+ import { prisma } from './shared/lib/prisma';
+-import { PublishService } from './publish.service';
++import { publishPost } from './publication.service';
+ 
+-/**
+- * Автопилот: Фоновый планировщик публикаций.
+- * Проверяет базу данных каждую минуту на наличие одобренных постов, 
+- * время публикации которых наступило.
+- */
+-export const initScheduler = () => {
+-  console.log('🛰️  Autopilot Scheduler: Активен (интервал 60с)');
+-
+-  cron.schedule('* * * * *', async () => {
+-    const now = new Date();
+-    
+-    try {
+-      // Ищем посты со статусом APPROVED, время которых пришло (scheduledAt <= now)
+-      const approvedPosts = await prisma.contentPost.findMany({
+-        where: {
+-          status: 'APPROVED',
+-          scheduledAt: {
+-            lte: now
+-          }
+-        },
+-        include: {
+-          project: true
+-        }
+-      });
+-
+-      if (approvedPosts.length === 0) return;
+-
+-      console.log(`📡 Обнаружено постов для авто-публикации: ${approvedPosts.length}`);
+-
+-      for (const post of approvedPosts) {
+-        const { tgBotToken, tgChatId } = post.project;
+-
+-        if (!tgBotToken || !tgChatId) {
+-          console.error(`⚠️ Пропуск поста ${post.id}: Не настроены Telegram-токены в проекте.`);
+-          continue;
+-        }
+-
+-        if (!post.content) {
+-          console.error(`⚠️ Пропуск поста ${post.id}: Отсутствует контент для публикации.`);
+-          continue;
+-        }
+-
+-        try {
+-          // Отправляем через существующий PublishService
+-          await PublishService.sendToTelegram(tgBotToken, tgChatId, post.content);
+-
+-          // Обновляем статус на PUBLISHED
+-          await prisma.contentPost.update({
+-            where: { id: post.id },
+-            data: { status: 'PUBLISHED' }
+-          });
+-
+-          console.log(`✅ Пост "${post.title}" (ID: ${post.id}) успешно опубликован в Автопилоте.`);
+-        } catch (publishError: any) {
+-          console.error(`❌ Ошибка авто-публикации поста ${post.id}:`, publishError.message);
+-        }
+-      }
+-    } catch (error) {
+-      console.error('❌ Критическая ошибка планировщика:', error);
++export const initScheduler = () => cron.schedule('* * * * *', async () => {
++  try {
++    const posts = await prisma.contentPost.findMany({
++      where: { status: 'APPROVED', scheduledAt: { lte: new Date() } },
++      select: { id: true },
++    });
++    for (const post of posts) {
++      try { await publishPost(post.id, true); }
++      catch { console.error('[Scheduler] Не удалось опубликовать пост', post.id); }
+     }
+-  });
+-};
++  } catch { console.error('[Scheduler] Не удалось прочитать очередь'); }
++}, { noOverlap: true });
+--- a/apps/api/src/shared/ai/openai.provider.ts
++++ b/apps/api/src/shared/ai/openai.provider.ts
+@@ -16,7 +16,7 @@
+     if (!apiKey) {
+       throw new Error('OPENAI_API_KEY не задан в apps/api/.env, а AI_PROVIDER=openai');
+     }
+-    this.client = new OpenAI({ apiKey });
++    this.client = new OpenAI({ apiKey, timeout: 30000, maxRetries: 1 });
+   }
+ 
+   async generateText(prompt: string, options?: AIRequestOptions): Promise<string> {
+--- a/apps/api/src/shared/ai/openrouter.provider.ts
++++ b/apps/api/src/shared/ai/openrouter.provider.ts
+@@ -22,6 +22,8 @@
+     }
+     this.client = new OpenAI({
+       apiKey,
++      timeout: 30000,
++      maxRetries: 1,
+       baseURL: 'https://openrouter.ai/api/v1',
+     });
+     this.model = config.ai.openrouter.model;
+--- /dev/null
++++ b/apps/api/src/shared/lib/AppError.ts
+@@ -0,0 +1,5 @@
++export class AppError extends Error {
++  constructor(message: string, public statusCode = 500, public code = 'INTERNAL_ERROR') {
++    super(message);
++  }
++}
+--- a/apps/api/src/shared/lib/config.ts
++++ b/apps/api/src/shared/lib/config.ts
+@@ -1,16 +1,23 @@
+ import * as dotenv from 'dotenv';
+ import * as path from 'path';
+ 
+-dotenv.config({ path: path.join(__dirname, '../../../.env') });
++dotenv.config({ path: path.resolve(__dirname, '../../../.env'), quiet: true });
++
++const port = Number(process.env.PORT ?? 3001);
++if (!Number.isInteger(port) || port < 1 || port > 65535) throw new Error('PORT должен быть целым числом 1–65535');
++const provider = process.env.AI_PROVIDER || 'openrouter';
++if (provider !== 'openrouter' && provider !== 'openai') throw new Error('Неверный AI_PROVIDER');
+ 
+ export const config = {
+-  port: Number(process.env.PORT ?? 3001),
++  port,
++  host: '127.0.0.1', // single-user API: не открывать в Интернет без auth reverse proxy
++  postbackToken: process.env.POSTBACK_TOKEN,
+   db: { url: process.env.DATABASE_URL! },
+   openai: { apiKey: process.env.OPENAI_API_KEY },
+   telegram: { token: process.env.TELEGRAM_BOT_TOKEN! }, // If needed elsewhere
+   ai: {
+     // Which AIProvider implementation to use: 'openrouter' (default) or 'openai'
+-    provider: (process.env.AI_PROVIDER ?? 'openrouter') as 'openrouter' | 'openai',
++    provider: provider,
+     openrouter: {
+       // Может отсутствовать — провайдер проверяет при первом AI-вызове
+       apiKey: process.env.OPENROUTER_API_KEY,
+--- /dev/null
++++ b/apps/api/src/shared/lib/public-web.ts
+@@ -0,0 +1,54 @@
++import axios from 'axios';
++import { lookup } from 'node:dns/promises';
++import { isIP } from 'node:net';
++import { Agent as HttpAgent } from 'node:http';
++import { Agent as HttpsAgent } from 'node:https';
++
++export function isPublicAddress(address: string): boolean {
++  if (isIP(address) === 4) {
++    const [a, b, c] = address.split('.').map(Number);
++    return !(a === 0 || a === 10 || a === 127 || a >= 224
++      || (a === 100 && b >= 64 && b <= 127)
++      || (a === 169 && b === 254) || (a === 172 && b >= 16 && b <= 31)
++      || (a === 192 && (b === 168 || b === 0 || (b === 88 && c === 99)))
++      || (a === 198 && (b === 18 || b === 19 || (b === 51 && c === 100)))
++      || (a === 203 && b === 0 && c === 113));
++  }
++  // Разрешаем лишь global unicast IPv6, блокируем mapped IPv4, local и multicast.
++  if (isIP(address) === 6) {
++    const [first, second] = address.split(':');
++    const head = parseInt(first, 16); const next = parseInt(second || '0', 16);
++    return head >= 0x2000 && head < 0x3fff
++      && !(head === 0x2001 && (next <= 0x1ff || next === 0xdb8))
++      && head !== 0x2002;
++  }
++  return false;
++}
++
++export async function fetchPublicHtml(rawUrl: string): Promise<string> {
++  const url = new URL(rawUrl);
++  if (!['http:', 'https:'].includes(url.protocol) || url.username || url.password
++    || (url.port && !['80', '443'].includes(url.port))) throw new Error('Разрешены только публичные HTTP(S)-адреса без логина');
++  const hostname = url.hostname.replace(/^\[|\]$/g, '');
++  const records = isIP(hostname) ? [{ address: hostname, family: isIP(hostname) }]
++    : await lookup(hostname, { all: true });
++  if (!records.length || records.some(record => !isPublicAddress(record.address))) throw new Error('Непубличный адрес запрещён');
++  const selected = records[0];
++  // DNS проверен и закреплён на время запроса: нет повторного разрешения/rebinding.
++  const pinnedLookup: import('node:net').LookupFunction = (_host, options, callback) => {
++    if (options.all) callback(null, [{ address: selected.address, family: selected.family }]);
++    else callback(null, selected.address, selected.family);
++  };
++  const httpAgent = new HttpAgent({ lookup: pinnedLookup });
++  const httpsAgent = new HttpsAgent({ lookup: pinnedLookup });
++  try {
++    const response = await axios.get<string>(url.toString(), {
++      adapter: 'http', proxy: false, httpAgent, httpsAgent,
++      maxRedirects: 0, timeout: 10000, maxContentLength: 1024 * 1024,
++      responseType: 'text', headers: { 'User-Agent': 'GrowthOS/1.0' },
++    });
++    const contentType = String(response.headers['content-type'] || '');
++    if (!/^(text\/html|text\/plain|application\/xhtml\+xml)/i.test(contentType)) throw new Error('Ожидается текст или HTML');
++    return response.data;
++  } finally { httpAgent.destroy(); httpsAgent.destroy(); }
++}
+--- /dev/null
++++ b/apps/api/src/shared/middleware/http.ts
+@@ -0,0 +1,20 @@
++import { ErrorRequestHandler, RequestHandler } from 'express';
++import { ZodError } from 'zod';
++import { AppError } from '../lib/AppError';
++
++export const asyncHandler = (fn: RequestHandler): RequestHandler =>
++  (req, res, next) => Promise.resolve().then(() => fn(req, res, next)).catch(next);
++
++export const errorHandler: ErrorRequestHandler = (err: unknown, _req, res, _next) => {
++  if (res.headersSent) return _next(err);
++  const bodyError = err as { type?: string };
++  const status = err instanceof AppError ? err.statusCode
++    : err instanceof ZodError || bodyError?.type === 'entity.parse.failed' ? 400
++    : bodyError?.type === 'entity.too.large' ? 413 : 500;
++  const message = err instanceof AppError ? err.message
++    : status === 400 ? 'Некорректные входные данные'
++    : status === 413 ? 'Слишком большой запрос' : 'Внутренняя ошибка сервера';
++  // Не логируем тело запроса, Axios-конфиг или секреты.
++  if (status === 500) console.error('[API] Unhandled error');
++  res.status(status).json({ data: null, error: { message, code: err instanceof AppError ? err.code : 'REQUEST_ERROR' }, meta: null });
++};
+--- /dev/null
++++ b/apps/api/src/shared/middleware/local-access.ts
+@@ -0,0 +1,13 @@
++import { RequestHandler } from 'express';
++
++export const localOrigins = ['http://localhost:3000', 'http://localhost:5173', 'http://127.0.0.1:5173', 'http://127.0.0.1:3000'];
++// Это защита локального приложения, НЕ замена аутентификации для публичного деплоя.
++export const localAccess: RequestHandler = (req, res, next) => {
++  const host = req.headers.host?.split(':')[0];
++  const origin = req.get('origin');
++  if (!['localhost', '127.0.0.1'].includes(host || '') || (origin && !localOrigins.includes(origin))) {
++    res.status(403).json({ data: null, error: 'Разрешён только локальный доступ', meta: null });
++    return;
++  }
++  next();
++};
+--- /dev/null
++++ b/apps/api/src/shared/middleware/postback-auth.ts
+@@ -0,0 +1,20 @@
++import { timingSafeEqual } from 'node:crypto';
++import { RequestHandler } from 'express';
++import { config } from '../lib/config';
++
++export function tokensMatch(actual: string, expected: string): boolean {
++  const a = Buffer.from(actual); const b = Buffer.from(expected);
++  return a.length === b.length && timingSafeEqual(a, b);
++}
++export const postbackAuth: RequestHandler = (req, res, next) => {
++  if (!config.postbackToken || config.postbackToken.length < 32) {
++    res.status(503).json({ data: null, error: 'Настройте POSTBACK_TOKEN (минимум 32 символа)', meta: null });
++    return;
++  }
++  const token = req.get('x-postback-token') || '';
++  if (!tokensMatch(token, config.postbackToken)) {
++    res.status(401).json({ data: null, error: 'Неверная авторизация постбека', meta: null });
++    return;
++  }
++  next();
++};
+--- /dev/null
++++ b/apps/api/tests/regression.test.cjs
+@@ -0,0 +1,203 @@
++const { test, before, after } = require('node:test');
++const assert = require('node:assert/strict');
++const { mkdtempSync, rmSync } = require('node:fs');
++const { tmpdir } = require('node:os');
++const path = require('node:path');
++const { execFileSync } = require('node:child_process');
++const directory = mkdtempSync(path.join(tmpdir(), 'growth-os-test-'));
++process.env.DATABASE_URL = `file:${path.join(directory, 'test.db')}`;
++process.env.POSTBACK_TOKEN = 'test-only-token-012345678901234567890123456789';
++execFileSync(process.execPath, ['node_modules/prisma/build/index.js', 'migrate', 'deploy'], {
++  cwd: path.resolve(__dirname, '..'), env: process.env, stdio: 'pipe',
++});
++const { prisma } = require('../dist/shared/lib/prisma');
++const { isPublicAddress, fetchPublicHtml } = require('../dist/shared/lib/public-web');
++const { postbackAuth, tokensMatch } = require('../dist/shared/middleware/postback-auth');
++const { errorHandler } = require('../dist/shared/middleware/http');
++const { PublishService } = require('../dist/publish.service');
++const { publishPost } = require('../dist/publication.service');
++const { ContentService } = require('../dist/modules/content/content.service');
++const { projectsRouter } = require('../dist/modules/projects/projects.router');
++const { trafficRouter } = require('../dist/modules/traffic/traffic.router');
++const { createLinkSchema, postbackSchema } = require('../dist/modules/traffic/traffic.schema');
++const { weeklyPlanSchema, updatePostSchema } = require('../dist/modules/content/content.schema');
++const { createProjectSchema } = require('../dist/modules/projects/projects.schema');
++const { trafficService } = require('../dist/modules/traffic/traffic.service');
++const { outreachService } = require('../dist/modules/outreach/outreach.service');
++const { aiProvider } = require('../dist/shared/ai');
++const express = require('express');
++let project, other, server, base;
++before(async () => {
++  project = await prisma.project.create({ data: { name: 'Regression', niche: 'test', tgBotToken: 'fake-only', tgChatId: '-100123' } });
++  other = await prisma.project.create({ data: { name: 'Other', niche: 'test' } });
++  const app = express(); app.use(express.json());
++  app.use('/api/projects', projectsRouter); app.use('/api/traffic', trafficRouter);
++  app.get('/auth-test', postbackAuth, (_req, res) => res.json({ ok: true }));
++  app.use(errorHandler);
++  server = await new Promise(resolve => { const s = app.listen(0, '127.0.0.1', () => resolve(s)); });
++  base = `http://127.0.0.1:${server.address().port}`;
++});
++after(async () => {
++  await prisma.$disconnect();
++  if (server) await new Promise(resolve => server.close(resolve));
++  rmSync(directory, { recursive: true, force: true });
++});
++
++test('SSRF: private, reserved and mapped addresses are blocked', async () => {
++  for (const ip of ['127.0.0.1', '10.0.0.1', '172.16.0.1', '192.168.1.2', '169.254.169.254', '100.64.0.1', '0.0.0.0', '224.0.0.1', '198.18.0.1', '192.0.2.1', '203.0.113.1', '::1', 'fc00::1', 'fe80::1', '::ffff:127.0.0.1', '2001:db8::1', '2002:7f00:1::']) assert.equal(isPublicAddress(ip), false, ip);
++  for (const ip of ['8.8.8.8', '1.1.1.1', '2606:4700:4700::1111']) assert.equal(isPublicAddress(ip), true, ip);
++  for (const url of ['http://127.0.0.1/', 'http://[::1]/', 'file:///etc/passwd', 'http://user:pass@example.com', 'http://localhost/']) await assert.rejects(fetchPublicHtml(url));
++});
++
++test('Schemas reject dangerous URLs, invalid plans, dates and fractional weekdays', () => {
++  assert.equal(createLinkSchema.safeParse({ body: { projectId: project.id, name: 'x', source: 'x', targetUrl: 'javascript:alert(1)' } }).success, false);
++  assert.equal(updatePostSchema.safeParse({ scheduledAt: '2026-10-13T19:00' }).success, false);
++  assert.equal(updatePostSchema.safeParse({ scheduledAt: '2026-10-13T19:00:00+03:00' }).success, true);
++  assert.equal(updatePostSchema.safeParse({ scheduledAt: null }).success, true);
++  assert.equal(updatePostSchema.safeParse({ status: 'PUBLISHED' }).success, false);
++  assert.equal(weeklyPlanSchema.safeParse([]).success, false);
++  assert.equal(weeklyPlanSchema.safeParse(Array.from({length:7}, () => ({ title: 'T', content: 'Text' }))).success, true);
++  assert.equal(createProjectSchema.safeParse({ body: { name: 'T', niche: 'T', planGenerationDay: 0.5 } }).success, false);
++  assert.equal(postbackSchema.safeParse({ query: { clickid: project.id, eventid: 'evt', payout: 'Infinity' } }).success, false);
++  assert.equal(postbackSchema.safeParse({ query: { clickid: project.id } }).success, false);
++});
++
++test('Postback authentication rejects absent/wrong tokens and accepts a correct token', async () => {
++  assert.equal(tokensMatch('a', 'aa'), false); assert.equal(tokensMatch('abc', 'abc'), true);
++  assert.equal((await fetch(`${base}/auth-test`)).status, 401);
++  assert.equal((await fetch(`${base}/auth-test`, { headers: { 'x-postback-token': 'wrong' } })).status, 401);
++  assert.equal((await fetch(`${base}/auth-test`, { headers: { 'x-postback-token': process.env.POSTBACK_TOKEN } })).status, 200);
++});
++
++test('Project API never returns Telegram token and an empty update preserves it', async () => {
++  const response = await fetch(`${base}/api/projects`); const payload = await response.json();
++  assert.equal(JSON.stringify(payload).includes('fake-only'), false);
++  const row = payload.data.find(p => p.id === project.id);
++  assert.equal(row.hasTelegramToken, true); assert.equal('tgBotToken' in row, false);
++  const updated = await fetch(`${base}/api/projects/${project.id}`, { method: 'PATCH', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ tgBotToken: '', dna: 'DNA' }) });
++  assert.equal(updated.status, 200);
++  assert.equal((await prisma.project.findUnique({where:{id:project.id}})).tgBotToken, 'fake-only');
++});
++
++test('Publication atomic claim sends once under concurrent requests', async () => {
++  const post = await prisma.contentPost.create({ data: { projectId: project.id, title: 'Concurrent', content: 'Plain <text> & chars', status: 'APPROVED', scheduledAt: new Date(Date.now() - 1000) } });
++  let calls = 0;
++  PublishService.sendToTelegram = async () => { calls++; await new Promise(resolve => setTimeout(resolve, 20)); };
++  const outcomes = await Promise.allSettled([publishPost(post.id), publishPost(post.id, true)]);
++  assert.equal(calls, 1); assert.equal(outcomes.filter(x => x.status === 'fulfilled').length, 1);
++  assert.equal((await prisma.contentPost.findUnique({ where: { id: post.id } })).status, 'PUBLISHED');
++  await assert.rejects(publishPost(post.id), error => error.statusCode === 409);
++  await assert.rejects(new ContentService().approvePost(post.id));
++  await assert.rejects(new ContentService().updatePost(post.id, { content: 'overwrite' }));
++});
++
++test('Unknown send result is never auto-retried', async () => {
++  const post = await prisma.contentPost.create({ data: { projectId: project.id, title: 'Uncertain', content: 'Text' } });
++  let calls = 0; PublishService.sendToTelegram = async () => { calls++; throw new Error('Timeout'); };
++  await assert.rejects(publishPost(post.id), error => error.code === 'PUBLICATION_UNKNOWN');
++  assert.equal((await prisma.contentPost.findUnique({where:{id:post.id}})).status, 'PUBLISH_UNKNOWN');
++  await assert.rejects(publishPost(post.id), error => error.statusCode === 409); assert.equal(calls, 1);
++});
++
++test('Scheduled publication respects due date', async () => {
++  const post = await prisma.contentPost.create({ data: { projectId: project.id, title: 'Future', content: 'Text', status: 'APPROVED', scheduledAt: new Date(Date.now() + 86400000) } });
++  let calls = 0; PublishService.sendToTelegram = async () => { calls++; };
++  await assert.rejects(publishPost(post.id, true), error => error.statusCode === 409); assert.equal(calls, 0);
++});
++
++test('Editing approved text resets approval', async () => {
++  const post = await prisma.contentPost.create({data:{projectId:project.id,title:'Edit',content:'Old',status:'APPROVED'}});
++  const result = await new ContentService().updatePost(post.id, {content:'New'});
++  assert.equal(result.status, 'DRAFT');
++});
++
++test('Postback retries and concurrent duplicates produce one conversion', async () => {
++  const link = await prisma.trackingLink.create({ data: { projectId: project.id, slug: 'test', name: 'Test', source: 'test', targetUrl: 'https://example.com' } });
++  const click = await prisma.clickEvent.create({ data: { linkId: link.id } });
++  const data = { clickid: click.id, eventid: 'test-event-1', type: 'deposit', payout: 10 };
++  const outcomes = await Promise.all([trafficService.registerPostback(data), trafficService.registerPostback(data)]);
++  assert.equal(outcomes[0].id, outcomes[1].id); assert.equal(await prisma.conversion.count(), 1);
++  await assert.rejects(trafficService.registerPostback({...data,payout:11}));
++  const response = await fetch(`${base}/api/traffic/postback?clickid=${click.id}&eventid=test-event-2&type=registration&payout=0`, {headers:{'x-postback-token':process.env.POSTBACK_TOKEN}});
++  assert.equal(response.status, 200);
++  assert.equal((await fetch(`${base}/api/traffic/postback?clickid=${click.id}`)).status, 401);
++});
++
++test('Async database errors return JSON instead of unhandled promise rejections', async () => {
++  const response = await fetch(`${base}/api/traffic/links`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({projectId:'00000000-0000-4000-8000-000000000000',name:'Missing',source:'x',targetUrl:'https://example.com'}) });
++  assert.equal(response.status, 500); assert.equal((await response.json()).data, null);
++});
++
++test('Outreach rejects cross-project templates and username-only contacts before sending', async () => {
++  const lead = await prisma.lead.create({data:{projectId:project.id,name:'Tester',handle:'@user',source:'test'}});
++  const template = await prisma.outreachTemplate.create({data:{projectId:other.id,name:'Other',content:'Hello'}});
++  await assert.rejects(outreachService.sendTemplate(lead.id, template.id), /разным проектам/);
++  const valid = await prisma.outreachTemplate.create({data:{projectId:project.id,name:'Local',content:'Hello'}});
++  await assert.rejects(outreachService.sendTemplate(lead.id, valid.id), /числовой Telegram/);
++  await assert.rejects(outreachService.generateAIMessage({leadId:lead.id,projectId:other.id}), /другому проекту/);
++});
++
++test('Weekly generation rejects invalid AI JSON before DB writes and uses chosen strategy', async () => {
++  aiProvider.generateText = async () => '{"not":"a plan"}';
++  const count = await prisma.contentPost.count();
++  await assert.rejects(new ContentService().generateWeeklyPlan(project.id));
++  assert.equal(await prisma.contentPost.count(), count);
++  const post = await prisma.contentPost.create({data:{projectId:project.id,title:'Story'}});
++  let prompt; aiProvider.generateText = async text => { prompt = text; return 'Story text'; };
++  await new ContentService().generatePost(post.id, 'STORYTELLING');
++  assert.match(prompt, /СТРАТЕГИЯ: Storytelling/);
++});
++
++test('Local access rejects hostile Origin and DNS-rebinding Host', () => {
++  const { localAccess } = require('../dist/shared/middleware/local-access');
++  for (const [host, origin, expected] of [['127.0.0.1:3001', undefined, 200], ['localhost:3001', 'http://localhost:5173', 200], ['evil.example:3001', undefined, 403], ['127.0.0.1:3001', 'https://evil.example', 403]]) {
++    let status = 200; let nextCalled = false;
++    localAccess({ headers: {host}, get: () => origin }, { status(code) {status = code; return this;}, json() {} }, () => {nextCalled = true;});
++    assert.equal(status, expected); assert.equal(nextCalled, expected === 200);
++  }
++});
++
++test('Empty content cannot be approved', async () => {
++  const post = await prisma.contentPost.create({ data: { projectId: project.id, title: 'Empty', content: '   ' } });
++  await assert.rejects(new ContentService().approvePost(post.id));
++});
++
++test('Legacy schema upgrade baselines drift and preserves existing records', async () => {
++  const url = `file:${path.join(directory, 'legacy.db')}`;
++  const cwd = path.resolve(__dirname, '..'); const env = {...process.env, DATABASE_URL:url};
++  const cli = args => execFileSync(process.execPath, ['node_modules/prisma/build/index.js', ...args], {cwd, env, stdio:'pipe'});
++  cli(['db','push','--schema','prisma/legacy-schema-check.prisma','--skip-generate']);
++  const { PrismaClient } = require('@prisma/client'); const legacy = new PrismaClient({datasources:{db:{url}}});
++  try {
++    const keep = await legacy.project.create({data:{name:'Preserve',niche:'test',dna:'Keep me',tgBotToken:'synthetic-token'}});
++    const lead = await legacy.lead.create({data:{projectId:keep.id,name:'Test lead',handle:'12345',source:'test'}});
++    for (const migration of ['20260325062249_init','20260325064930_add_leads','20260325072411_add_ai_feedback','20260705234626_add_learning_schema','20260712222645_add_traffic_module']) cli(['migrate','resolve','--applied',migration]);
++    await legacy.$disconnect();
++    execFileSync(process.execPath,['scripts/upgrade-db.cjs','--backup-confirmed'],{cwd,env,stdio:'pipe'});
++    assert.equal((await legacy.project.findUnique({where:{id:keep.id}})).dna, 'Keep me');
++    assert.equal((await legacy.lead.findUnique({where:{id:lead.id}})).handle, '12345');
++    await legacy.conversion.count(); // externalId now exists
++    const again = execFileSync(process.execPath,['scripts/upgrade-db.cjs','--backup-confirmed'],{cwd,env,encoding:'utf8'});
++    assert.match(again, /Данные не сбрасывались/);
++  } finally {await legacy.$disconnect();}
++});
++
++test('Missing migration preserves historical Lead.contact as handle', async () => {
++  const { mkdirSync, copyFileSync, cpSync, writeFileSync } = require('node:fs');
++  const fixture = path.join(directory,'historical'); mkdirSync(fixture);
++  const cwd = path.resolve(__dirname,'..');
++  copyFileSync(path.join(cwd,'prisma/schema.prisma'),path.join(fixture,'schema.prisma'));
++  mkdirSync(path.join(fixture,'migrations'));
++  copyFileSync(path.join(cwd,'prisma/migrations/migration_lock.toml'),path.join(fixture,'migrations/migration_lock.toml'));
++  for (const migration of ['20260325062249_init','20260325064930_add_leads','20260325072411_add_ai_feedback','20260705234626_add_learning_schema','20260712222645_add_traffic_module']) cpSync(path.join(cwd,'prisma/migrations',migration),path.join(fixture,'migrations',migration),{recursive:true});
++  const url=`file:${path.join(directory,'historical.db')}`; const env={...process.env,DATABASE_URL:url};
++  execFileSync(process.execPath,['node_modules/prisma/build/index.js','migrate','deploy','--schema',path.join(fixture,'schema.prisma')],{cwd,env,stdio:'pipe'});
++  const {PrismaClient}=require('@prisma/client'); const historical=new PrismaClient({datasources:{db:{url}}});
++  try {
++    await historical.$executeRawUnsafe('INSERT INTO "Project" (id,name,niche,updatedAt) VALUES (?,?,?,CURRENT_TIMESTAMP)','historical-project','Test','test');
++    await historical.$executeRawUnsafe('INSERT INTO "Lead" (id,name,contact,source,projectId) VALUES (?,?,?,?,?)','historical-lead','Test','preserved-contact','test','historical-project');
++    await historical.$disconnect();
++    execFileSync(process.execPath,['scripts/upgrade-db.cjs','--backup-confirmed'],{cwd,env,stdio:'pipe'});
++    assert.equal((await historical.lead.findUnique({where:{id:'historical-lead'}})).handle,'preserved-contact');
++  } finally {await historical.$disconnect();}
++});
+--- a/apps/web/src/AIChat.tsx
++++ b/apps/web/src/AIChat.tsx
+@@ -1,7 +1,7 @@
+ import { useState, useRef, useEffect } from 'react'
+ import { Send, Save, Sparkles, User, Bot, Loader2, CheckCircle2, Zap, Trash2 } from 'lucide-react'
+ import { cn } from './lib/utils'
+-import { API_URL } from './lib/api'
++import { API_URL, checkedFetch as fetch } from './lib/api'
+ 
+ interface Message {
+   id: string
+@@ -56,31 +56,11 @@
+ 
+   // 2. Persistence: Сохраняем историю при каждом изменении messages
+   useEffect(() => {
+-    localStorage.setItem(`growth_os_chat_${projectId}`, JSON.stringify(messages))
++    try { localStorage.setItem(`growth_os_chat_${projectId}`, JSON.stringify(messages)) }
++    catch { console.error('Не удалось сохранить историю чата в браузере') }
+   }, [messages, projectId])
+ 
+-  // 3. Sync: Если projectId меняется (переключили проект), подгружаем его историю
+-  useEffect(() => {
+-    const saved = localStorage.getItem(`growth_os_chat_${projectId}`)
+-    if (saved) {
+-      try {
+-        setMessages(JSON.parse(saved))
+-      } catch (e) {
+-        console.error('Failed to parse chat history on sync', e)
+-      }
+-    } else {
+-      // Если истории нет, ставим дефолтное приветствие
+-      setMessages([
+-        {
+-          id: genId(),
+-          role: 'assistant',
+-          content:
+-            'Система инициализирована.\n\nЯ — Growth OS Neural Core. Могу анализировать контент, строить стратегии и работать с данными твоего проекта. Задай вопрос или выбери быстрый промпт.',
+-          ts: Date.now(),
+-        },
+-      ])
+-    }
+-  }, [projectId])
++  // App монтирует отдельный экземпляр с key={projectId}: история не смешивается.
+ 
+   useEffect(() => {
+     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
+--- a/apps/web/src/App.tsx
++++ b/apps/web/src/App.tsx
+@@ -1,4 +1,4 @@
+-import { useState, useEffect } from 'react'
++import { useState, useEffect, useRef } from 'react'
+ import { 
+   Sidebar, 
+   SidebarItem, 
+@@ -9,7 +9,7 @@
+   ScrollArea 
+ } from './components/ui'
+ import { cn } from './lib/utils'
+-import { API_URL } from './lib/api'
++import { API_URL, checkedFetch as fetch } from './lib/api'
+ import LeadManager from './LeadManager'
+ import OutreachEditor from './OutreachEditor'
+ import OutreachEngine from './OutreachEngine'
+@@ -20,7 +20,7 @@
+ 
+ // --- Types ---
+ 
+-type PostStatus = "DRAFT" | "PUBLISHED" | "SCHEDULED" | "GENERATING" | "APPROVED"
++type PostStatus = "PUBLISHING" | "PUBLISH_UNKNOWN" | "DRAFT" | "PUBLISHED" | "SCHEDULED" | "GENERATING" | "APPROVED"
+ type Platform = "telegram" | "threads" | "instagram"
+ 
+ interface ContentPost {
+@@ -41,7 +41,8 @@
+   dna: string | null
+   brandVoice: string | null
+   targetAudience: string | null
+-  tgBotToken?: string
++  hasTelegramToken?: boolean
++  planGenerationDay?: number | null
+   tgChatId?: string
+   sourceUrl?: string
+ }
+@@ -58,6 +59,8 @@
+ // --- Main App ---
+ 
+ export default function App() {
++  const latestProjectId = useRef('')
++  const postsRequestId = useRef(0)
+   const [projects, setProjects] = useState<Project[]>([])
+   const [posts, setPosts] = useState<ContentPost[]>([])
+   const [selectedId, setSelectedId] = useState<string | null>(null)
+@@ -75,10 +78,11 @@
+   const [voice, setVoice] = useState('')
+   const [sourceUrl, setSourceUrl] = useState('')
+   const [botToken, setBotToken] = useState('')
++  const [hasTelegramToken, setHasTelegramToken] = useState(false)
+   const [chatId, setChatId] = useState('')
+   const [planDay, setPlanDay] = useState<number | null>(null)
+ 
+-  const [activeProjectId, setActiveProjectId] = useState("518d38c6-0802-444d-b05b-8e67c6d46a1f")
++  const [activeProjectId, setActiveProjectId] = useState('')
+ 
+   useEffect(() => {
+     const init = async () => {
+@@ -95,16 +99,10 @@
+ 
+   useEffect(() => {
+     if (activeProjectId) {
+-      fetchPosts(activeProjectId).then(() => {
+-        // Авто-генерация плана, если пусто и сегодня тот самый день
+-        const today = new Date().getDay(); // 0-6
+-        if (posts.length === 0 && planDay === today) {
+-          console.log('🤖 Autopilot: Очередь пуста, запускаю генерацию плана...');
+-          handleGeneratePlan();
+-        }
+-      });
++      // Генерация только по явному действию: эффект со stale posts дублировал планы.
++      void fetchPosts(activeProjectId);
+     }
+-  }, [activeProjectId, planDay])
++  }, [activeProjectId])
+ 
+   const fetchProjects = async () => {
+     try {
+@@ -113,7 +111,7 @@
+       const data = json?.data || []
+       setProjects(data)
+       
+-      const project = data.find((p: any) => p.id === activeProjectId) || data[0]
++      const project = data.find((p: Project) => p.id === activeProjectId) || data[0]
+       if (project) {
+         handleProjectSelect(project)
+       }
+@@ -139,29 +137,30 @@
+     } catch (e) { console.error('Create error:', e) }
+   }
+ 
+-  const handleProjectSelect = (project: any) => {
++  const handleProjectSelect = (project: Project) => {
++    latestProjectId.current = project.id
++    postsRequestId.current++
++    if (project.id !== activeProjectId) { setPosts([]); setSelectedId(null); }
+     setActiveProjectId(project.id)
+     setDna(project.dna || '')
+     setVoice(project.brandVoice || '')
+-    setBotToken(project.tgBotToken || '')
++    setBotToken('')
++    setHasTelegramToken(Boolean(project.hasTelegramToken))
+     setChatId(project.tgChatId || '')
+     setSourceUrl(project.sourceUrl || '')
+     setPlanDay(project.planGenerationDay !== undefined ? project.planGenerationDay : null)
+   }
+ 
+   const fetchPosts = async (projectId: string) => {
++    if (latestProjectId.current !== projectId) return;
++    const requestId = ++postsRequestId.current;
+     try {
+       const res = await fetch(`${API_URL}/api/content/project/${projectId}`)
+       const json = await res.json()
+       const data = json?.data || []
++      if (latestProjectId.current !== projectId || requestId !== postsRequestId.current) return;
+       setPosts(data)
+-      if (data.length > 0) {
+-        if (!selectedId || !data.find((p: any) => p.id === selectedId)) {
+-            setSelectedId(data[0].id)
+-        }
+-      } else {
+-        setSelectedId(null)
+-      }
++      setSelectedId(previous => data.some((post: ContentPost) => post.id === previous) ? previous : data[0]?.id ?? null)
+     } catch (e) { console.error('Content fetch error:', e) }
+   }
+ 
+@@ -191,7 +190,7 @@
+         body: JSON.stringify({ 
+           dna, 
+           brandVoice: voice,
+-          tgBotToken: botToken,
++          ...(botToken.trim() ? { tgBotToken: botToken.trim() } : {}),
+           tgChatId: chatId,
+           sourceUrl,
+           planGenerationDay: planDay
+@@ -199,7 +198,9 @@
+       })
+       if (res.ok) {
+         await fetchProjects()
++        setBotToken('')
+         setShowSettings(false)
++        await fetchPosts(activeProjectId)
+       }
+     } catch (e) { console.error('Sync error:', e) }
+   }
+@@ -215,7 +216,7 @@
+         await fetchPosts(activeProjectId)
+       }
+     } catch (e) { console.error('Publish error:', e) }
+-    finally { setIsPublishing(false) }
++    finally { setIsPublishing(false); await fetchPosts(activeProjectId); }
+   }
+ 
+   const handleGeneratePlan = async () => {
+@@ -223,7 +224,8 @@
+     try {
+       await fetch(`${API_URL}/api/content/project/${activeProjectId}/plan`, { method: 'POST' })
+       await fetchPosts(activeProjectId)
+-    } finally { setIsGenerating(false) }
++    } catch (error) { console.error('Generation failed', error instanceof Error ? error.message : 'Ошибка'); }
++    finally { setIsGenerating(false) }
+   }
+ 
+   const handleGeneratePost = async (id: string) => {
+@@ -235,7 +237,8 @@
+         body: JSON.stringify({ postId: id })
+       })
+       await fetchPosts(activeProjectId)
+-    } finally { setIsGenerating(false) }
++    } catch (error) { console.error('Generation failed', error instanceof Error ? error.message : 'Ошибка'); }
++    finally { setIsGenerating(false) }
+   }
+ 
+   const handleApprovePost = async (id: string) => {
+@@ -263,7 +266,7 @@
+     } catch (e) { console.error('Clear error:', e) }
+   }
+ 
+-  const handleUpdatePost = async (id: string, data: any) => {
++  const handleUpdatePost = async (id: string, data: { title?: string; content?: string | null; scheduledAt?: string | null }) => {
+     try {
+       await fetch(`${API_URL}/api/content/${id}`, {
+         method: 'PATCH',
+@@ -445,7 +448,7 @@
+                                 </div>
+                                 <div className="flex items-center gap-2">
+                                   <Badge variant={post.status === 'APPROVED' ? 'default' : selectedId === post.id && !showSettings ? 'outline' : 'outline'} className={post.status === 'APPROVED' ? 'bg-indigo-500/20 text-indigo-400 border-indigo-500/30' : ''}>
+-                                      {post.status === 'PUBLISHED' ? 'В ЭФИРЕ' : post.status === 'APPROVED' ? 'Ожидает авто-постинга' : 'Черновик'}
++                                      {post.status === 'PUBLISHED' ? 'В ЭФИРЕ' : post.status === 'PUBLISHING' ? 'Отправляется' : post.status === 'PUBLISH_UNKNOWN' ? 'Проверьте канал' : post.status === 'APPROVED' ? 'Ожидает авто-постинга' : 'Черновик'}
+                                   </Badge>
+                                   <button 
+                                       onClick={(e) => { e.stopPropagation(); handleDeletePost(post.id); }}
+@@ -469,7 +472,7 @@
+                                 <span className={cn(
+                                     "uppercase text-[9px]",
+                                     post.status === 'PUBLISHED' ? "text-emerald-400 font-bold" : post.status === 'APPROVED' ? "text-indigo-400 font-bold" : ""
+-                                )}>{post.status === 'PUBLISHED' ? 'В ЭФИРЕ' : post.status === 'APPROVED' ? 'Ожидает авто-постинга' : 'Черновик'}</span>
++                                )}>{post.status === 'PUBLISHED' ? 'В ЭФИРЕ' : post.status === 'PUBLISHING' ? 'Отправляется' : post.status === 'PUBLISH_UNKNOWN' ? 'Проверьте канал' : post.status === 'APPROVED' ? 'Ожидает авто-постинга' : 'Черновик'}</span>
+                              </div>
+ 
+                              {selectedId === post.id && !showSettings && (
+@@ -493,15 +496,15 @@
+                                     {post.status === 'APPROVED' && (
+                                         <button 
+                                             onClick={(e) => { e.stopPropagation(); handlePublishPost(); }}
+-                                            disabled={!botToken || !chatId || isPublishing}
++                                            disabled={!(botToken || hasTelegramToken) || !chatId || isPublishing}
+                                             className={cn(
+                                                 "w-full py-2 border text-[10px] font-bold uppercase tracking-widest rounded-lg transition-all",
+-                                                (!botToken || !chatId) 
++                                                (!(botToken || hasTelegramToken) || !chatId) 
+                                                   ? "bg-zinc-900 text-zinc-600 border-zinc-800 cursor-not-allowed opacity-50"
+                                                   : "bg-indigo-600/20 hover:bg-indigo-600/40 border-indigo-500/30 text-indigo-400 shadow-[0_0_15px_-5px_rgba(79,70,229,0.4)]"
+                                             )}
+                                         >
+-                                            {!botToken || !chatId ? "Настрой Телеграм" : "Отправить в канал"}
++                                            {!(botToken || hasTelegramToken) || !chatId ? "Настрой Телеграм" : "Отправить в канал"}
+                                         </button>
+                                     )}
+                                 </div>
+@@ -569,9 +572,11 @@
+                     <div className="space-y-3">
+                         <label className="text-[9px] font-bold text-zinc-500 uppercase tracking-widest block">TELEGRAM BOT TOKEN</label>
+                         <Input 
++                            type="password"
++                            autoComplete="new-password"
+                             value={botToken}
+                             onChange={(e) => setBotToken(e.target.value)}
+-                            placeholder="5781...:AAH_..."
++                            placeholder={hasTelegramToken ? "Токен сохранён. Введите новый для замены" : "Введите токен бота"}
+                             className="bg-zinc-950/40 border-zinc-800/60"
+                         />
+                     </div>
+@@ -587,9 +592,10 @@
+                 </div>
+ 
+                 <div className="p-6 bg-indigo-500/5 border border-indigo-500/10 rounded-2xl space-y-4">
+-                    <label className="text-[10px] font-bold text-indigo-400 uppercase tracking-widest block">Автопилот: День генерации плана</label>
++                    <label className="text-[10px] font-bold text-indigo-400 uppercase tracking-widest block">День генерации плана (задел на будущее)</label>
+                     <select 
+-                        value={planDay || ''} 
++                        disabled
++                        value={planDay ?? ''} 
+                         onChange={(e) => setPlanDay(e.target.value ? parseInt(e.target.value) : null)}
+                         className="w-full bg-zinc-950 border border-zinc-800 text-sm p-3 rounded-lg outline-none focus:border-indigo-500/50"
+                     >
+@@ -602,7 +608,7 @@
+                         <option value="6">Суббота</option>
+                         <option value="0">Воскресенье</option>
+                     </select>
+-                    <p className="text-[9px] text-zinc-600 italic">В этот день система автоматически создаст контент на 7 дней, если очередь пуста.</p>
++                    <p className="text-[9px] text-zinc-600 italic">Автоматическая генерация пока отключена: серверное расписание не реализовано. Создавайте план кнопкой. Одобренные посты публикуются по расписанию при работающем API.</p>
+                 </div>
+ 
+                 <div className="flex justify-start pt-4">
+@@ -613,7 +619,7 @@
+             </div>
+           </ScrollArea>
+         ) : activeTab === 'market' ? (
+-          <MarketAnalyzer projectId={activeProjectId} />
++          <MarketAnalyzer key={activeProjectId} projectId={activeProjectId} />
+         ) : activeTab === 'strategies' ? (
+           <div className="flex-1 flex flex-col items-center justify-center p-12 text-center animate-in fade-in duration-500">
+             <div className="w-16 h-16 rounded-2xl bg-zinc-900 border border-zinc-800 flex items-center justify-center mx-auto mb-6 shadow-inner text-indigo-500">
+@@ -625,15 +631,15 @@
+             </p>
+           </div>
+         ) : activeTab === 'leads' ? (
+-          <LeadManager projectId={activeProjectId} />
++          <LeadManager key={activeProjectId} projectId={activeProjectId} />
+         ) : activeTab === 'outreach' ? (
+-          <OutreachEditor projectId={activeProjectId} />
++          <OutreachEditor key={activeProjectId} projectId={activeProjectId} />
+         ) : activeTab === 'ai_outreach' ? (
+-          <OutreachEngine projectId={activeProjectId} />
++          <OutreachEngine key={activeProjectId} projectId={activeProjectId} />
+         ) : activeTab === 'traffic' ? (
+-          <TrafficManager projectId={activeProjectId} />
++          <TrafficManager key={activeProjectId} projectId={activeProjectId} />
+         ) : activeTab === 'ai_chat' ? (
+-          <AIChat projectId={activeProjectId} />
++          <AIChat key={activeProjectId} projectId={activeProjectId} />
+         ) : activeTab === 'content' && selectedPost ? (
+           <>
+             <div className="px-12 py-10 border-b border-zinc-800/40 flex items-start justify-between">
+@@ -655,7 +661,7 @@
+                             type="datetime-local"
+                             defaultValue={selectedPost.scheduledAt ? new Date(new Date(selectedPost.scheduledAt).getTime() - new Date().getTimezoneOffset() * 60000).toISOString().slice(0, 16) : ''}
+                             onBlur={(e) => { 
+-                                if (e.target.value) handleUpdatePost(selectedPost.id, { scheduledAt: e.target.value });
++                                handleUpdatePost(selectedPost.id, { scheduledAt: e.target.value ? new Date(e.target.value).toISOString() : null });
+                             }}
+                             className="bg-zinc-900 border border-zinc-800 text-[10px] text-zinc-400 rounded px-2 py-1 focus:border-indigo-500/50 outline-none transition-all"
+                           />
+@@ -675,7 +681,7 @@
+                     )}
+                     <Button 
+                         variant="secondary"
+-                        disabled={isGenerating || isPublishing}
++                        disabled={isGenerating || isPublishing || !['DRAFT', 'APPROVED'].includes(selectedPost.status)}
+                         onClick={() => handleGeneratePost(selectedPost.id)}
+                     >
+                         {isGenerating ? "ГЕНЕРАЦИЯ..." : "Перегенерировать текст"}
+@@ -683,12 +689,12 @@
+                     {selectedPost.status !== 'DRAFT' && (
+                         <Button 
+                             onClick={handlePublishPost}
+-                            disabled={isPublishing || selectedPost.status === 'PUBLISHED' || !botToken || !chatId}
++                            disabled={isPublishing || !['DRAFT', 'APPROVED'].includes(selectedPost.status) || !(botToken || hasTelegramToken) || !chatId}
+                             className={cn(
+                                 "relative overflow-hidden group min-w-[140px]",
+                                 selectedPost.status === 'PUBLISHED' 
+                                   ? "bg-emerald-500/10 text-emerald-400 border-emerald-500/20" 
+-                                  : (!botToken || !chatId)
++                                  : (!(botToken || hasTelegramToken) || !chatId)
+                                     ? "bg-zinc-900 text-zinc-600 border-zinc-800 opacity-50"
+                                     : "bg-indigo-600 hover:bg-indigo-500 shadow-[0_0_20px_-5px_rgba(79,70,229,0.5)]"
+                             )}
+@@ -705,10 +711,10 @@
+                                     </svg>
+                                     <span className="text-xs">В ЭФИРЕ</span>
+                                 </div>
+-                            ) : (!botToken || !chatId) ? (
++                            ) : (!(botToken || hasTelegramToken) || !chatId) ? (
+                                 <span className="text-[10px]">НЕТ НАСТРОЕК</span>
+                             ) : selectedPost.status === 'APPROVED' ? (
+-                                "ПЕРЕВЕСТИ В ЧЕРНОВИК" 
++                                "ОТПРАВИТЬ В КАНАЛ" 
+                             ) : (
+                                 "ОТПРАВИТЬ В КАНАЛ"
+                             )}
+@@ -717,6 +723,11 @@
+                 </div>
+             </div>
+ 
++            {['PUBLISHING', 'PUBLISH_UNKNOWN'].includes(selectedPost.status) && (
++              <p className="p-4 text-sm text-amber-400" role="status">
++                {selectedPost.status === 'PUBLISHING' ? 'Пост отправляется. Если API прервался, проверьте канал перед восстановлением статуса.' : 'Результат отправки не подтверждён. Проверьте Telegram-канал: автоматический повтор заблокирован, чтобы не создать дубль.'}
++              </p>
++            )}
+             <ScrollArea className="flex-1 p-12 bg-[#09090b]">
+                 <div className="max-w-4xl mx-auto">
+                     {selectedPost.content ? (
+--- a/apps/web/src/OutreachEngine.tsx
++++ b/apps/web/src/OutreachEngine.tsx
+@@ -1,8 +1,8 @@
+ import { useState, useEffect } from 'react'
+ import { Button, Badge, ScrollArea, Input } from './components/ui'
+ import { cn } from './lib/utils'
+-import { API_URL } from './lib/api'
+-import { Sparkles, Send, User, MessageSquare, History } from 'lucide-react'
++import { API_URL, checkedFetch as fetch } from './lib/api'
++import { Sparkles, Copy, Send, User, MessageSquare, History } from 'lucide-react'
+ 
+ interface Lead {
+   id: string
+@@ -233,10 +233,11 @@
+               <div className="space-y-4 pt-4">
+                 <Button 
+                   disabled={!generatedMessage || isGenerating}
++                  onClick={() => navigator.clipboard.writeText(generatedMessage).catch(() => alert('Не удалось скопировать. Выделите текст и скопируйте вручную.'))}
+                   className="w-full h-14 bg-indigo-600 hover:bg-indigo-500 text-white font-bold uppercase tracking-[0.2em] text-[11px] rounded-xl shadow-[0_0_20px_-5px_rgba(79,70,229,0.5)] transition-all flex items-center justify-center gap-3"
+                 >
+-                  <Send size={16} />
+-                  Отправить в Telegram
++                  <Copy size={16} />
++                  Скопировать сообщение
+                 </Button>
+                 <div className="grid grid-cols-2 gap-3">
+                    <Button variant="secondary" className="text-[10px] font-bold uppercase tracking-widest h-10 border-zinc-800" onClick={() => handleGenerateMessage(selectedLead)}>
+--- a/apps/web/src/TrafficManager.tsx
++++ b/apps/web/src/TrafficManager.tsx
+@@ -276,7 +276,7 @@
+ 
+           {links.length > 0 && (
+             <p className="mt-6 text-[10px] text-zinc-600 font-mono leading-relaxed">
+-              ПОСТБЕК ДЛЯ ПАРТНЁРКИ: {API_URL}/api/traffic/postback?clickid={'{clickid}'}&type=deposit&payout={'{payout}'}
++              ПОСТБЕК (нужен заголовок x-postback-token; eventid уникален для каждого события): {API_URL}/api/traffic/postback?clickid={'{clickid}'}&eventid={'{unique_event_id}'}&type=deposit&payout={'{payout}'}
+             </p>
+           )}
+         </div>
+--- a/apps/web/src/lib/api.ts
++++ b/apps/web/src/lib/api.ts
+@@ -1,3 +1,16 @@
+ // Единая точка настройки адреса API. Переопределяется через apps/web/.env:
+ // VITE_API_URL=http://127.0.0.1:3002
+-export const API_URL = import.meta.env.VITE_API_URL ?? 'http://127.0.0.1:3001';
++export const API_URL = import.meta.env.VITE_API_URL?.trim().replace(/\/$/, '') || 'http://127.0.0.1:3001';
++
++
++export async function checkedFetch(input: RequestInfo | URL, init?: RequestInit): Promise<Response> {
++  const response = await globalThis.fetch(input, init);
++  if (!response.ok) {
++    const body = await response.clone().json().catch(() => null);
++    const message = typeof body?.error === 'string' ? body.error
++      : body?.error?.message || body?.message || `Ошибка запроса (${response.status})`;
++    globalThis.alert(message);
++    throw new Error(message);
++  }
++  return response;
++}
+--- a/apps/web/src/lib/utils.ts
++++ b/apps/web/src/lib/utils.ts
+@@ -1,4 +1,4 @@
+-export function cn(...inputs: (string | boolean | undefined | null | { [key: string]: any })[]) {
++export function cn(...inputs: (string | boolean | undefined | null | { [key: string]: unknown })[]) {
+   const classes: string[] = [];
+   for (const input of inputs) {
+     if (!input) continue;
+--- a/backend-rules.md
++++ b/backend-rules.md
+@@ -1,4 +1,8 @@
+ # Backend Rules — Personal Growth OS
++
++> Актуализация 13.10.2026. Фактический стек: Express 4 + TypeScript + Prisma 5 + SQLite. Bull/Redis, Winston и n8n пока не подключены; ниже остаются целевые соглашения.
++> Инструкция запуска и обновления БД: `README_REVIEW.md`. Итоги проверки: `AUDIT_RU.md`.
++
+ 
+ ## Стек
+ - Node.js 20 + Express + TypeScript (strict mode)
+--- a/frontend-rules.md
++++ b/frontend-rules.md
+@@ -1,4 +1,8 @@
+ # Frontend Rules — Personal Growth OS
++
++> Актуализация 13.10.2026. Фактический стек: React 19 + Vite 8 + TypeScript + Tailwind 4. TanStack Query, Zustand, React Router и React Hook Form пока не установлены; ниже — целевые соглашения, не перечень реализованных библиотек.
++> Инструкция запуска и обновления БД: `README_REVIEW.md`. Итоги проверки: `AUDIT_RU.md`.
++
+ 
+ ## Стек
+ - React 18 + Vite + TypeScript (strict mode)

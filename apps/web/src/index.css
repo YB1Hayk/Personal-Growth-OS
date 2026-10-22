@@ -1,0 +1,14 @@
+/* Cleared for Antigravity UI Kit */
+@import "tailwindcss";
+
+:root {
+  background-color: #09090b;
+}
+
+body {
+  margin: 0;
+  padding: 0;
+  background-color: #09090b;
+  color: #f4f4f5;
+  font-family: 'Inter', system-ui, sans-serif;
+}

@@ -1,0 +1,440 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Никол Маркетинговый Инженер</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=Montserrat:ital,wght@0,900;1,900&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+    
+    <style>
+        :root {
+            --accent: #3b82f6;
+            --accent-glow: rgba(59, 130, 246, 0.5);
+            --bg-dark: #030303;
+            --card-bg: rgba(15, 15, 15, 0.7);
+        }
+
+        body {
+            font-family: 'Inter', sans-serif;
+            background-color: var(--bg-dark);
+            color: #ffffff;
+            overflow-x: hidden;
+            scroll-behavior: smooth;
+        }
+
+        h1, h2, h3, .brand-font {
+            font-family: 'Montserrat', sans-serif;
+            text-transform: uppercase;
+        }
+
+        /* Custom Scrollbar */
+        ::-webkit-scrollbar { width: 6px; }
+        ::-webkit-scrollbar-track { background: #050505; }
+        ::-webkit-scrollbar-thumb { background: #222; border-radius: 10px; }
+        ::-webkit-scrollbar-thumb:hover { background: var(--accent); }
+
+        .glass-card {
+            background: var(--card-bg);
+            backdrop-filter: blur(12px);
+            border: 1px solid rgba(255, 255, 255, 0.05);
+            border-radius: 2rem;
+            transition: all 0.4s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+        }
+
+        .glass-card:hover {
+            border-color: var(--accent);
+            box-shadow: 0 0 30px var(--accent-glow);
+            transform: translateY(-5px);
+        }
+
+        .grid-overlay {
+            background-image: radial-gradient(rgba(59, 130, 246, 0.15) 1px, transparent 1px);
+            background-size: 40px 40px;
+        }
+
+        .hero-title {
+            font-size: clamp(4rem, 15vw, 12rem);
+            line-height: 0.85;
+            letter-spacing: -0.05em;
+        }
+
+        .accent-gradient {
+            background: linear-gradient(135deg, #3b82f6 0%, #1d4ed8 100%);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+        }
+
+        .step-number {
+            font-size: 10rem;
+            font-weight: 900;
+            line-height: 1;
+            opacity: 0.05;
+            font-family: 'Montserrat', sans-serif;
+            position: absolute;
+            left: -1rem;
+            top: -2rem;
+        }
+
+        .stat-box {
+            border-left: 4px solid var(--accent);
+            padding-left: 1.5rem;
+        }
+
+        /* Animations */
+        @keyframes float {
+            0% { transform: translateY(0px); }
+            50% { transform: translateY(-20px); }
+            100% { transform: translateY(0px); }
+        }
+
+        .floating { animation: float 6s ease-in-out infinite; }
+
+        .reveal {
+            opacity: 0;
+            transform: translateY(30px);
+            transition: all 0.8s ease-out;
+        }
+
+        .reveal.active {
+            opacity: 1;
+            transform: translateY(0);
+        }
+    </style>
+</head>
+<body>
+
+    <header class="relative min-h-screen flex items-center justify-center overflow-hidden grid-overlay">
+        <div class="absolute inset-0 bg-gradient-to-b from-transparent via-black/50 to-black z-0"></div>
+        
+        <div class="container mx-auto px-6 relative z-10">
+            <div class="flex flex-col lg:flex-row items-center gap-16">
+                <div class="w-full lg:w-2/3">
+                    <p class="text-blue-500 font-bold tracking-[0.5em] uppercase mb-8 text-sm animate-pulse">Engineering Future Sales</p>
+                    <h1 class="hero-title font-black mb-6 italic">НИКОЛ</h1>
+                    <div class="flex items-center gap-6 mb-12">
+                        <div class="h-[2px] w-24 bg-blue-600"></div>
+                        <p class="text-2xl md:text-4xl font-light text-gray-400 uppercase tracking-widest">
+                            Маркетинговый <span class="text-white font-bold">Инженер</span>
+                        </p>
+                    </div>
+                    <p class="text-xl text-gray-500 max-w-xl leading-relaxed mb-10">
+                        Я не создаю рекламу. Я проектирую архитектуру бизнеса, где эстетика бренда и инженерная точность воронки работают как единый механизм.
+                    </p>
+                    <div class="flex flex-wrap gap-6">
+                        <a href="#cases" class="px-10 py-5 bg-blue-600 hover:bg-blue-700 text-white font-bold rounded-2xl transition-all shadow-lg shadow-blue-600/20">Смотреть проекты</a>
+                        <a href="#contact" class="px-10 py-5 border border-white/10 hover:bg-white/5 text-white font-bold rounded-2xl transition-all">Обсудить систему</a>
+                    </div>
+                </div>
+                
+                <div class="w-full lg:w-1/3 flex justify-center">
+                    <div class="relative group">
+                        <div class="absolute -inset-4 bg-blue-600/30 rounded-[3rem] blur-3xl group-hover:bg-blue-600/50 transition-all duration-1000"></div>
+                        <div class="relative w-72 h-72 md:w-[450px] md:h-[450px] rounded-[3.5rem] overflow-hidden border border-white/10 shadow-2xl floating">
+                            <!-- Placeholder image with fallback -->
+                            <img src="image_4951be.png" alt="Никол" class="w-full h-full object-cover" onerror="this.src='https://placehold.co/600x600/111/fff?text=NIKOL'">
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+        
+        <div class="absolute bottom-10 left-1/2 -translate-x-1/2 text-gray-600 text-sm flex flex-col items-center gap-2">
+            <span>SCROLL TO EXPLORE</span>
+            <div class="w-px h-12 bg-gradient-to-b from-blue-600 to-transparent"></div>
+        </div>
+    </header>
+
+    <section class="py-32 relative bg-[#050505]">
+        <div class="container mx-auto px-6">
+            <div class="max-w-4xl mx-auto text-center mb-24 reveal">
+                <h2 class="text-blue-500 font-bold tracking-widest mb-6">МАНИФЕСТ STUDIO FORGE</h2>
+                <h3 class="text-5xl md:text-7xl font-black italic leading-none uppercase mb-12">
+                    Эстетика <span class="text-blue-600">продает.</span><br>
+                    Инженерия <span class="text-gray-700">удерживает.</span>
+                </h3>
+            </div>
+
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-10">
+                <div class="glass-card p-12 reveal">
+                    <div class="flex items-center gap-6 mb-8">
+                        <div class="w-16 h-16 rounded-2xl bg-blue-600/10 flex items-center justify-center text-blue-500 text-3xl">
+                            <i class="fa-solid fa-microchip"></i>
+                        </div>
+                        <h4 class="text-2xl font-black uppercase">Визуальный Код</h4>
+                    </div>
+                    <p class="text-gray-400 text-lg leading-relaxed mb-6">
+                        Дизайн — это не украшательство, это <span class="text-white font-semibold">фильтр доверия</span>. Мы создаем Lifestyle, который вызывает желание обладать продуктом еще до того, как клиент прочитает первый абзац текста.
+                    </p>
+                    <ul class="text-sm text-gray-500 space-y-3">
+                        <li class="flex items-center gap-3"><i class="fa-solid fa-check text-blue-500"></i> Ручная проработка эстетики</li>
+                        <li class="flex items-center gap-3"><i class="fa-solid fa-check text-blue-500"></i> Уникальное ДНК бренда</li>
+                    </ul>
+                </div>
+
+                <div class="glass-card p-12 reveal" style="transition-delay: 0.2s;">
+                    <div class="flex items-center gap-6 mb-8">
+                        <div class="w-16 h-16 rounded-2xl bg-blue-600/10 flex items-center justify-center text-blue-500 text-3xl">
+                            <i class="fa-solid fa-gears"></i>
+                        </div>
+                        <h4 class="text-2xl font-black uppercase">Смысловая Архитектура</h4>
+                    </div>
+                    <p class="text-gray-400 text-lg leading-relaxed mb-6">
+                        За каждой «красивой картинкой» стоит <span class="text-white font-semibold">жесткая математика</span>. Каждое слово, каждый переход в воронке — это выверенный шаг, ведущий к транзакции. Мы не автоматизируем хаос.
+                    </p>
+                    <ul class="text-sm text-gray-500 space-y-3">
+                        <li class="flex items-center gap-3"><i class="fa-solid fa-check text-blue-500"></i> Психология конверсии</li>
+                        <li class="flex items-center gap-3"><i class="fa-solid fa-check text-blue-500"></i> Сквозная логика воронки</li>
+                    </ul>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <section class="py-32 relative overflow-hidden bg-black">
+        <div class="grid-overlay absolute inset-0 opacity-30"></div>
+        <div class="container mx-auto px-6 relative z-10">
+            <h2 class="text-center text-4xl md:text-6xl font-black mb-32 uppercase italic reveal">Инженерия <span class="text-blue-600">Процесса</span></h2>
+            
+            <div class="space-y-40">
+                <!-- Step 0 -->
+                <div class="relative flex flex-col lg:flex-row items-center gap-20 reveal">
+                    <span class="step-number">00</span>
+                    <div class="w-full lg:w-1/2">
+                        <h4 class="text-blue-500 font-bold uppercase tracking-widest mb-4">Этап ноль</h4>
+                        <h3 class="text-4xl md:text-5xl font-black mb-8 uppercase italic">Фундамент и ДНК</h3>
+                        <div class="space-y-6 text-xl text-gray-400">
+                            <p>Мы не начинаем с рекламы. Мы начинаем с <span class="text-white">проработки смыслов</span>. Кто вы? Зачем вы рынку? Почему клиент должен заплатить именно вам?</p>
+                            <div class="glass-card p-8 bg-white/5 border-l-4 border-l-blue-600">
+                                <ul class="space-y-4 text-base">
+                                    <li class="flex items-start gap-3"><i class="fa-solid fa-fingerprint text-blue-600 mt-1"></i> <span><strong>Глубокие CastDev</strong> Поиск истинных болей через исследования.</span></li>
+                                    <li class="flex items-start gap-3"><i class="fa-solid fa-route text-blue-600 mt-1"></i> <span><strong>Проектирование CJM</strong> Карта пути клиента до запуска.</span></li>
+                                </ul>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="w-full lg:w-1/2 rounded-[3rem] overflow-hidden shadow-2xl h-[400px]">
+                        <img src="https://images.unsplash.com/photo-1517245386807-bb43f82c33c4?q=80&w=1280" class="w-full h-full object-cover grayscale opacity-50 hover:grayscale-0 transition-all duration-700">
+                    </div>
+                </div>
+
+                <!-- Step 1 -->
+                <div class="relative flex flex-col lg:flex-row-reverse items-center gap-20 reveal">
+                    <span class="step-number" style="left: auto; right: -1rem;">01</span>
+                    <div class="w-full lg:w-1/2">
+                        <h4 class="text-blue-500 font-bold uppercase tracking-widest mb-4">Этап один</h4>
+                        <h3 class="text-4xl md:text-5xl font-black mb-8 uppercase italic">Живой Прототип</h3>
+                        <div class="space-y-6 text-xl text-gray-400">
+                            <p>Первый месяц — это <span class="text-white">ручная обкатка</span>. Никаких роботов. Я лично подбираю контент, тестирую связки и ищу «золотое зерно», которое дает конверсию.</p>
+                            <div class="glass-card p-8 bg-blue-600 text-white">
+                                <p class="italic text-lg">«Мы подтверждаем гипотезу деньгами клиента, прежде чем строить завод по масштабированию».</p>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="w-full lg:w-1/2 rounded-[3rem] overflow-hidden shadow-2xl h-[400px]">
+                        <img src="https://images.unsplash.com/photo-1434030216411-0b793f4b4173?q=80&w=1280" class="w-full h-full object-cover">
+                    </div>
+                </div>
+
+                <!-- Step 2 -->
+                <div class="relative flex flex-col lg:flex-row items-center gap-20 reveal">
+                    <span class="step-number">02</span>
+                    <div class="w-full lg:w-1/2">
+                        <h4 class="text-blue-500 font-bold uppercase tracking-widest mb-4">Этап два</h4>
+                        <h3 class="text-4xl md:text-5xl font-black mb-8 uppercase italic">Системная Инженерия</h3>
+                        <div class="grid grid-cols-1 sm:grid-cols-2 gap-6 mt-8">
+                            <div class="glass-card p-6">
+                                <i class="fa-solid fa-industry text-blue-500 text-2xl mb-4"></i>
+                                <h5 class="font-bold mb-2 uppercase">Контент-Заводы</h5>
+                                <p class="text-sm text-gray-500">Автономное производство эстетичного контента.</p>
+                            </div>
+                            <div class="glass-card p-6">
+                                <i class="fa-solid fa-robot text-blue-500 text-2xl mb-4"></i>
+                                <h5 class="font-bold mb-2 uppercase">ИИ-Продажники</h5>
+                                <p class="text-sm text-gray-500">Квалификация лидов 24/7 в стиле вашего бренда.</p>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="w-full lg:w-1/2 rounded-[3rem] overflow-hidden shadow-2xl h-[400px]">
+                        <img src="https://images.unsplash.com/photo-1581091226825-a6a2a5aee158?q=80&w=1280" class="w-full h-full object-cover grayscale opacity-50">
+                    </div>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <section id="cases" class="py-32 bg-[#050505]">
+        <div class="container mx-auto px-6">
+            <h2 class="text-center text-4xl md:text-7xl font-black mb-24 uppercase italic reveal">Кейсы <span class="text-blue-600">Engineered</span></h2>
+            
+            <div class="space-y-32">
+                <!-- Case 1 -->
+                <div class="grid grid-cols-1 lg:grid-cols-2 gap-16 items-center reveal">
+                    <div class="order-2 lg:order-1">
+                        <h3 class="text-5xl font-black uppercase mb-8 italic leading-tight">Прибыльный <br><span class="text-blue-600">Telegram-Канал</span></h3>
+                        <p class="text-xl text-gray-400 mb-10 leading-relaxed">
+                            Создание медиа-актива с нуля. Мы превратили просто «блог» в полноценный бизнес с управляемой стоимостью подписчика и прогнозируемым ROI.
+                        </p>
+                        <div class="flex gap-12">
+                            <div class="stat-box">
+                                <div class="text-5xl font-black">30k+</div>
+                                <div class="text-xs text-gray-500 uppercase font-bold tracking-widest mt-2">Аудитория</div>
+                            </div>
+                            <div class="stat-box">
+                                <div class="text-5xl font-black">X5</div>
+                                <div class="text-xs text-gray-500 uppercase font-bold tracking-widest mt-2">Окупаемость</div>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="order-1 lg:order-2 rounded-[4rem] overflow-hidden h-[500px] border border-white/5 shadow-2xl">
+                        <img src="https://images.unsplash.com/photo-1611606063065-ee7946f0787a?q=80&w=1280" class="w-full h-full object-cover grayscale hover:grayscale-0 transition-all duration-1000">
+                    </div>
+                </div>
+
+                <!-- Case 2 -->
+                <div class="grid grid-cols-1 lg:grid-cols-2 gap-16 items-center reveal">
+                    <div class="rounded-[4rem] overflow-hidden h-[500px] border border-white/5 shadow-2xl">
+                        <img src="https://verainterior.com/wp-content/uploads/2024/05/Dental-Clinic-Interior-Design-jpg.webp" class="w-full h-full object-cover">
+                    </div>
+                    <div>
+                        <h3 class="text-5xl font-black uppercase mb-8 italic leading-tight">Стоматология <br><span class="text-blue-600">B2C Local</span></h3>
+                        <p class="text-xl text-gray-400 mb-10 leading-relaxed">
+                            Система «Полная Запись». Перезапуск визуального имиджа и внедрение квиз-воронок. Мы убрали администраторов из процесса «продажи», оставив им только подтверждение записи.
+                        </p>
+                        <div class="flex gap-12">
+                            <div class="stat-box">
+                                <div class="text-5xl font-black">75%</div>
+                                <div class="text-xs text-gray-500 uppercase font-bold tracking-widest mt-2">Конверсия в запись</div>
+                            </div>
+                            <div class="stat-box">
+                                <div class="text-5xl font-black">-40%</div>
+                                <div class="text-xs text-gray-500 uppercase font-bold tracking-widest mt-2">Цена лида</div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Case 3 -->
+                <div class="grid grid-cols-1 lg:grid-cols-2 gap-16 items-center reveal">
+                    <div>
+                        <h3 class="text-5xl font-black uppercase mb-8 italic leading-tight">Промышленный <br><span class="text-blue-600">B2B Агро</span></h3>
+                        <p class="text-xl text-gray-400 mb-10 leading-relaxed">
+                            Выход на ЛПР агрохолдингов через контентный авторитет. Мы создали систему, где клиенты сами запрашивают КП после 3-го касания в воронке.
+                        </p>
+                        <div class="flex gap-12">
+                            <div class="stat-box">
+                                <div class="text-5xl font-black">20+</div>
+                                <div class="text-xs text-gray-500 uppercase font-bold tracking-widest mt-2">Контрактов</div>
+                            </div>
+                            <div class="stat-box">
+                                <div class="text-5xl font-black">3мес</div>
+                                <div class="text-xs text-gray-500 uppercase font-bold tracking-widest mt-2">Срок окупаемости</div>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="rounded-[4rem] overflow-hidden h-[500px] border border-white/5 shadow-2xl">
+                        <img src="https://images.unsplash.com/photo-1581092160562-40aa08e78837?q=80&w=1280" class="w-full h-full object-cover opacity-50">
+                    </div>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <section class="py-32 bg-black">
+        <div class="container mx-auto px-6">
+            <h2 class="text-center text-4xl font-black mb-20 uppercase italic reveal">Почему <span class="text-blue-600 italic underline">FORGE</span></h2>
+            <div class="glass-card overflow-hidden reveal">
+                <table class="w-full text-left">
+                    <thead>
+                        <tr class="bg-white/5">
+                            <th class="p-10 text-blue-500 font-bold uppercase text-xs tracking-widest">Параметр</th>
+                            <th class="p-10 text-gray-500 font-bold uppercase text-xs tracking-widest">Обычный Маркетолог</th>
+                            <th class="p-10 text-white font-bold uppercase text-xs tracking-widest bg-blue-600/20">Инженер Forge (Никол)</th>
+                        </tr>
+                    </thead>
+                    <tbody class="divide-y divide-white/5">
+                        <tr>
+                            <td class="p-10 font-bold text-sm uppercase">Подход</td>
+                            <td class="p-10 text-gray-500">Креатив ради креатива</td>
+                            <td class="p-10 text-blue-400 font-bold bg-blue-600/10">Логическая архитектура системы</td>
+                        </tr>
+                        <tr>
+                            <td class="p-10 font-bold text-sm uppercase">Контент</td>
+                            <td class="p-10 text-gray-500">Картинки со стоков</td>
+                            <td class="p-10 text-blue-400 font-bold bg-blue-600/10 italic">Уникальный визуальный код</td>
+                        </tr>
+                        <tr>
+                            <td class="p-10 font-bold text-sm uppercase">Технологии</td>
+                            <td class="p-10 text-gray-500">Ручной спам & звонки</td>
+                            <td class="p-10 text-blue-400 font-bold bg-blue-600/10">ИИ-агенты и CRM-системы</td>
+                        </tr>
+                        <tr>
+                            <td class="p-10 font-bold text-sm uppercase">Результат</td>
+                            <td class="p-10 text-gray-500">Клики и лайки</td>
+                            <td class="p-10 text-blue-400 font-bold bg-blue-600/10 italic font-black">ROI и окупаемая система</td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </section>
+
+    <section id="contact" class="py-32 relative grid-overlay">
+        <div class="container mx-auto px-6 text-center">
+            <div class="max-w-4xl mx-auto glass-card p-20 border-blue-500/30 relative overflow-hidden">
+                <div class="absolute top-0 right-0 p-4 opacity-10 text-9xl font-black italic select-none">FORGE</div>
+                
+                <h2 class="text-6xl md:text-8xl font-black mb-10 leading-tight italic uppercase reveal">Строим <br><span class="text-blue-600">Систему</span></h2>
+                <p class="text-2xl text-gray-400 mb-16 italic reveal">Ваш проект заслуживает и красоты, и точности. Давайте превратим его в актив.</p>
+                
+                <div class="inline-block p-[2px] bg-gradient-to-r from-blue-600 to-indigo-600 rounded-[2.5rem] reveal">
+                    <div class="bg-black px-16 py-10 rounded-[2.3rem] group cursor-pointer transition-all hover:bg-transparent">
+                        <p class="text-blue-500 group-hover:text-white font-black text-5xl tracking-tighter transition-colors">TG @Lv3498</p>
+                        <p class="text-xs text-gray-500 mt-4 uppercase tracking-[0.4em] font-bold">Никол Маркетинговый Инженер</p>
+                    </div>
+                </div>
+            </div>
+            
+            <div class="mt-20 text-gray-600 text-sm flex justify-between items-center px-10">
+                <div class="font-black italic text-xl">STUDIO <span class="text-blue-600">FORGE</span></div>
+                <div>© 2024 NIKOL ENGINEERING. ALL RIGHTS RESERVED.</div>
+                <div class="flex gap-6">
+                    <a href="#" class="hover:text-blue-500"><i class="fa-brands fa-telegram"></i></a>
+                    <a href="#" class="hover:text-blue-500"><i class="fa-brands fa-instagram"></i></a>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <script>
+        // Reveal on scroll logic
+        const observerOptions = {
+            threshold: 0.1
+        };
+
+        const observer = new IntersectionObserver((entries) => {
+            entries.forEach(entry => {
+                if (entry.isIntersecting) {
+                    entry.target.classList.add('active');
+                }
+            });
+        }, observerOptions);
+
+        document.querySelectorAll('.reveal').forEach(el => observer.observe(el));
+
+        // Smooth scroll for anchors
+        document.querySelectorAll('a[href^="#"]').forEach(anchor => {
+            anchor.addEventListener('click', function (e) {
+                e.preventDefault();
+                document.querySelector(this.getAttribute('href')).scrollIntoView({
+                    behavior: 'smooth'
+                });
+            });
+        });
+    </script>
+
+</body>
+</html>

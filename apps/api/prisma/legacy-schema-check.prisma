@@ -1,0 +1,196 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+model Project {
+  id              String        @id @default(uuid())
+  name            String
+  niche           String
+  description     String?
+  dna             String?
+  targetAudience  String?
+  brandVoice      String?
+  sourceUrl       String?
+  tgBotToken      String?
+  tgChatId        String?
+  planGenerationDay Int?          // 0-6 (Sunday-Saturday) для авто-генерации плана
+  createdAt       DateTime      @default(now())
+  updatedAt       DateTime      @updatedAt
+  posts           ContentPost[]
+  leads           Lead[]
+  integrations    Integration[]
+  outreachTemplates OutreachTemplate[]
+  insights          MarketInsight[]
+  learningInsights  LearningInsight[]
+  trackingLinks     TrackingLink[]
+}
+
+model MarketInsight {
+  id        String   @id @default(uuid())
+  projectId String
+  content   String   // Текст инсайта
+  category  String   // боль / запрос / тренд
+  source    String?  // Опциональная ссылка
+  createdAt DateTime @default(now())
+  project   Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+}
+
+model Integration {
+  id        String   @id @default(uuid())
+  projectId String
+  platform  String   // Сюда будем писать "TELEGRAM"
+  config    String   // JSON-строка с токеном и chat_id
+  project   Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model Account {
+  id        String   @id @default(uuid())
+  platform  String
+  login     String
+  status    String   @default("active")
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model Lead {
+  id          String   @id @default(uuid())
+  name        String
+  handle      String   // TG/Email
+  source      String
+  status      String   @default("NEW")
+  notes       String?
+  lastContact DateTime?
+  createdAt   DateTime @default(now())
+  projectId   String
+  project     Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  contentTouches LeadContentTouch[]
+}
+
+model AIFeedback {
+  id          String   @id @default(uuid())
+  pattern     String
+  antiPattern String
+  correction  String
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+}
+
+model ContentPost {
+  id          String    @id @default(uuid())
+  title       String
+  content     String?
+  status      String    @default("DRAFT") // Статусы: DRAFT, APPROVED, PUBLISHED
+  scheduledAt DateTime?
+  projectId   String
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+  project     Project   @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  metrics     ContentMetrics?
+  leadTouches LeadContentTouch[]
+}
+
+model OutreachTemplate {
+  id        String   @id @default(uuid())
+  name      String
+  content   String   // Текст с переменными: {name}, {username}
+  projectId String
+  project   Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  logs      OutreachLog[]
+}
+
+model OutreachLog {
+  id         String           @id @default(uuid())
+  leadId     String
+  templateId String
+  message    String           // итоговый текст после подстановки
+  status     String           @default("SENT") // SENT | FAILED
+  createdAt  DateTime         @default(now())
+  template   OutreachTemplate @relation(fields: [templateId], references: [id])
+}
+
+// --- Система самообучения (см. CLAUDE_1.md) ---
+// Схема — задел на будущее. Сбор/анализ данных пока не реализованы.
+
+model ContentMetrics {
+  id          String      @id @default(uuid())
+  postId      String      @unique
+  platform    String      // TG | Threads | IG
+  views       Int         @default(0)
+  reactions   Int         @default(0)
+  clicks      Int         @default(0)
+  collectedAt DateTime    @default(now())
+  post        ContentPost @relation(fields: [postId], references: [id], onDelete: Cascade)
+}
+
+model LeadContentTouch {
+  id        String      @id @default(uuid())
+  leadId    String
+  postId    String
+  result    String?     // OPENED | REPLIED | CONVERTED
+  touchedAt DateTime    @default(now())
+  lead      Lead        @relation(fields: [leadId], references: [id], onDelete: Cascade)
+  post      ContentPost @relation(fields: [postId], references: [id], onDelete: Cascade)
+}
+
+model LearningInsight {
+  id          String   @id @default(uuid())
+  projectId   String
+  module      String   // 'content' | 'sales' — тип инсайта
+  title       String
+  description String
+  dataPoints  Int      @default(0) // сколько событий/метрик лежит в основе
+  confidence  Float    @default(0) // 0-1
+  status      String   @default("pending") // pending | noted | dismissed
+  createdAt   DateTime @default(now())
+  project     Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+}
+// --- Модуль "Трафик" (арбитраж/закупка) ---
+// Учёт связок "источник × креатив": клики, конверсии, ROI.
+
+model TrackingLink {
+  id          String       @id @default(uuid())
+  projectId   String
+  slug        String       @unique // короткий код для /go/:slug
+  name        String       // имя связки для дашборда
+  source      String       // площадка: tg_kanal_x, vk_ads, seeding...
+  creative    String?      // метка креатива/поста
+  targetUrl   String       // куда ведём трафик
+  cost        Float        @default(0) // расход на размещение, вносится вручную
+  createdAt   DateTime     @default(now())
+  updatedAt   DateTime     @updatedAt
+  project     Project      @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  clicks      ClickEvent[]
+  conversions Conversion[]
+}
+
+model ClickEvent {
+  id          String       @id @default(uuid()) // передаётся дальше как clickid
+  linkId      String
+  ip          String?
+  userAgent   String?
+  referer     String?
+  createdAt   DateTime     @default(now())
+  link        TrackingLink @relation(fields: [linkId], references: [id], onDelete: Cascade)
+  conversions Conversion[]
+}
+
+model Conversion {
+  id        String       @id @default(uuid())
+  linkId    String
+  clickId   String?
+  type      String       // REGISTRATION | DEPOSIT | OTHER
+  payout    Float        @default(0) // выплата от партнёрки
+  raw       String?      // сырой querystring постбека для отладки
+  createdAt DateTime     @default(now())
+  link      TrackingLink @relation(fields: [linkId], references: [id], onDelete: Cascade)
+  click     ClickEvent?  @relation(fields: [clickId], references: [id], onDelete: SetNull)
+}
